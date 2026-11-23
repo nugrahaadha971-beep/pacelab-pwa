@@ -279,7 +279,7 @@ function modelEndpoint(model: string): string {
 }
 
 function isFallbackStatus(status: number): boolean {
-  return status === 429 || status === 503 || status === 404;
+  return status === 400 || status === 404 || status === 429 || status === 503;
 }
 
 function isMediaOnlyModel(lowerName: string): boolean {
@@ -644,7 +644,6 @@ export async function requestAiCoachAnalysis(
   }
 
   const text = await callGeminiText(buildAiCoachPrompt(ctx), { ...opts, apiKey }, {
-    thinkingConfig: { thinkingBudget: 0 },
     maxOutputTokens: 450,
     temperature: 0.3,
   });
