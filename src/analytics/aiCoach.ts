@@ -9,9 +9,12 @@ import { PLAN_LABEL } from '../plans/planSelector.ts';
 
 export const GEMINI_API_KEY_STORAGE_KEY = 'pacelab_gemini_api_key';
 export const GEMINI_MODEL_STORAGE_KEY = 'pacelab_gemini_model';
+export const AI_COACH_CACHE_STORAGE_KEY = 'pacelab_ai_coach_cache';
 export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash-lite';
+export const FALLBACK_GEMINI_MODEL = 'gemini-3.8-flash';
 export const GEMINI_ENDPOINT = `${GEMINI_API_BASE}/${DEFAULT_GEMINI_MODEL}:generateContent`;
+export const REQUEST_TIMEOUT_MS = 10_000;
 
 const WORKOUT_TYPE_ID: Record<WorkoutType, string> = {
   easy: 'Easy Run',
@@ -35,6 +38,7 @@ export type AiCoachErrorCode =
   | 'invalid_key'
   | 'quota_exceeded'
   | 'bad_request'
+  | 'timeout'
   | 'network'
   | 'empty_response'
   | 'invalid_json'
@@ -229,6 +233,8 @@ export interface RequestAiCoachOptions {
   fetchImpl?: typeof fetch;
   isOnline?: boolean;
   retryDelayMs?: number;
+  timeoutMs?: number;
+  forceRefresh?: boolean;
 }
 
 interface GeminiApiErrorBody {
@@ -251,50 +257,10 @@ interface GeminiGenerateResponse {
   };
 }
 
-interface GeminiModelInfo {
-  name?: string;
-  supportedGenerationMethods?: string[];
-}
-
-interface GeminiModelsListResponse {
-  models?: GeminiModelInfo[];
-}
-
-const RETRY_503_DELAY_MS = 1500;
-
-function sleep(ms: number): Promise<void> {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const MODEL_CHAIN: readonly string[] = [DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODEL];
 
 function modelEndpoint(model: string): string {
   return `${GEMINI_API_BASE}/${normalizeModelName(model)}:generateContent`;
-}
-
-function modelVersionScore(name: string): number {
-  const m = /gemini-(\d+(?:\.\d+)?)/.exec(name);
-  return m ? Number(m[1]) : 0;
-}
-
-function isMediaOnlyModel(lowerName: string): boolean {
-  return (
-    lowerName.includes('tts') ||
-    lowerName.includes('image') ||
-    lowerName.includes('audio') ||
-    lowerName.includes('live') ||
-    lowerName.includes('transcribe')
-  );
-}
-
-function modelPriorityScore(rawName: string): number {
-  const n = normalizeModelName(rawName).toLowerCase();
-  if (n === DEFAULT_GEMINI_MODEL) return 400_000;
-  const ver = modelVersionScore(n) * 100;
-  const stability = (!n.includes('exp') && !n.includes('thinking') ? 20 : 0) + (!n.includes('preview') ? 5 : 0);
-  if (n.includes('flash') && !n.includes('flash-lite')) return 300_000 + ver + stability;
-  if (n.includes('flash-lite')) return 200_000 + ver + stability;
-  if (n.includes('pro')) return 100_000 + ver + stability;
-  return 0;
 }
 
 function isFallbackStatus(status: number): boolean {
@@ -307,6 +273,7 @@ async function callGenerateContent(
   apiKey: string,
   prompt: string,
   generationConfig?: Record<string, unknown>,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   const payload: Record<string, unknown> = {
     contents: [{ parts: [{ text: prompt }] }],
@@ -314,6 +281,9 @@ async function callGenerateContent(
   if (generationConfig) {
     payload.generationConfig = generationConfig;
   }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetchFn(modelEndpoint(model), {
       method: 'POST',
@@ -322,75 +292,93 @@ async function callGenerateContent(
         'x-goog-api-key': apiKey,
       },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
-  } catch {
+  } catch (err) {
+    if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+      throw new AiCoachError(
+        'timeout',
+        'Permintaan ke Gemini melewati batas waktu 10 detik. Silakan coba lagi.',
+      );
+    }
     throw new AiCoachError(
       'network',
       'Gagal terhubung ke server Gemini. Periksa koneksi internet Anda lalu coba lagi.',
     );
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-async function attemptModel(
-  fetchFn: typeof fetch,
-  model: string,
-  apiKey: string,
-  prompt: string,
-  retryDelayMs: number,
-  generationConfig?: Record<string, unknown>,
-): Promise<Response> {
-  let res = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig);
-  if (res.status === 503) {
-    await sleep(retryDelayMs);
-    res = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig);
-  }
-  return res;
+export interface CachedAiCoachAnalysis {
+  hash: string;
+  text: string;
+  updatedAt: number;
 }
 
-async function findFallbackCandidates(
-  fetchFn: typeof fetch,
-  apiKey: string,
-  excludeModel?: string,
-): Promise<string[]> {
-  let listRes: Response;
+function fnv1aHash(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function buildAiCoachCacheHash(ctx: Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'>): string {
+  const cutoff = ctx.now;
+  const relevant = cutoff == null ? ctx.workouts : ctx.workouts.filter((w) => w.date <= cutoff);
+  const latestDate = relevant.reduce((max, w) => (w.date > max ? w.date : max), 0);
+  const acwrVal =
+    ctx.acwr.ratio != null && Number.isFinite(ctx.acwr.ratio)
+      ? ctx.acwr.ratio.toFixed(2)
+      : ctx.acwr.status;
+  return fnv1aHash(`${relevant.length}|${latestDate}|${acwrVal}`);
+}
+
+export function loadCachedAiCoachAnalysis(ctx: Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'>): string | null {
   try {
-    listRes = await fetchFn(GEMINI_API_BASE, {
-      method: 'GET',
-      headers: {
-        'x-goog-api-key': apiKey,
-      },
-    });
+    const raw = localStorage.getItem(AI_COACH_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CachedAiCoachAnalysis> | null;
+    if (
+      !parsed ||
+      typeof parsed.hash !== 'string' ||
+      typeof parsed.text !== 'string' ||
+      !parsed.text.trim()
+    ) {
+      return null;
+    }
+    return parsed.hash === buildAiCoachCacheHash(ctx) ? parsed.text : null;
   } catch {
-    return [];
+    return null;
   }
+}
 
-  if (!listRes.ok) return [];
-  const data = (await listRes.json().catch(() => null)) as GeminiModelsListResponse | null;
-  const models = data?.models ?? [];
-  const excluded = excludeModel ? normalizeModelName(excludeModel).toLowerCase() : '';
-  const seen = new Set<string>(excluded ? [excluded] : []);
+export function saveCachedAiCoachAnalysis(
+  ctx: Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'>,
+  text: string,
+): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  try {
+    const entry: CachedAiCoachAnalysis = {
+      hash: buildAiCoachCacheHash(ctx),
+      text: trimmed,
+      updatedAt: Date.now(),
+    };
+    localStorage.setItem(AI_COACH_CACHE_STORAGE_KEY, JSON.stringify(entry));
+  } catch {
+    /* penyimpanan tidak tersedia: abaikan */
+  }
+}
 
-  const candidates = models
-    .map((m) => ({
-      clean: normalizeModelName(m.name ?? ''),
-      methods: m.supportedGenerationMethods ?? [],
-    }))
-    .filter((m) => {
-      const lower = m.clean.toLowerCase();
-      if (!m.clean || seen.has(lower)) return false;
-      if (!m.methods.includes('generateContent')) return false;
-      if (isMediaOnlyModel(lower)) return false;
-      if (!lower.includes('flash') && !lower.includes('pro')) return false;
-      seen.add(lower);
-      return true;
-    })
-    .sort((a, b) => {
-      const diff = modelPriorityScore(b.clean) - modelPriorityScore(a.clean);
-      return diff !== 0 ? diff : b.clean.localeCompare(a.clean);
-    })
-    .map((m) => m.clean);
-
-  return candidates;
+export function clearCachedAiCoachAnalysis(): void {
+  try {
+    localStorage.removeItem(AI_COACH_CACHE_STORAGE_KEY);
+  } catch {
+    /* penyimpanan tidak tersedia: abaikan */
+  }
 }
 
 async function callGeminiText(
@@ -416,24 +404,37 @@ async function callGeminiText(
   }
 
   const fetchFn = opts.fetchImpl ?? fetch;
-  const retryDelayMs = opts.retryDelayMs ?? RETRY_503_DELAY_MS;
-  const activeModel = loadGeminiModel();
+  const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
 
-  let res = await attemptModel(fetchFn, activeModel, apiKey, prompt, retryDelayMs, generationConfig);
-  if (res.ok) {
-    saveGeminiModel(activeModel);
-  } else if (isFallbackStatus(res.status)) {
-    const candidates = await findFallbackCandidates(fetchFn, apiKey, activeModel);
-    for (const candidate of candidates) {
-      res = await attemptModel(fetchFn, candidate, apiKey, prompt, retryDelayMs, generationConfig);
-      if (res.ok) {
-        saveGeminiModel(candidate);
+  let res: Response | null = null;
+  let lastTimeoutErr: AiCoachError | null = null;
+
+  for (const model of MODEL_CHAIN) {
+    try {
+      const attempt = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig, timeoutMs);
+      res = attempt;
+      if (attempt.ok) {
+        saveGeminiModel(model);
         break;
       }
-      if (!isFallbackStatus(res.status)) {
+      if (!isFallbackStatus(attempt.status)) {
         break;
       }
+    } catch (err) {
+      if (err instanceof AiCoachError && err.code === 'timeout') {
+        lastTimeoutErr = err;
+        res = null;
+        continue;
+      }
+      throw err;
     }
+  }
+
+  if (!res) {
+    throw (
+      lastTimeoutErr ??
+      new AiCoachError('timeout', 'Permintaan ke Gemini melewati batas waktu 10 detik. Silakan coba lagi.')
+    );
   }
 
   if (!res.ok) {
@@ -515,7 +516,26 @@ export async function requestAiCoachAnalysis(
   ctx: AiCoachContext,
   opts: RequestAiCoachOptions = {},
 ): Promise<string> {
-  return callGeminiText(buildAiCoachPrompt(ctx), opts);
+  const apiKey = (opts.apiKey ?? loadGeminiApiKey()).trim();
+  if (!apiKey) {
+    throw new AiCoachError(
+      'missing_key',
+      'API Key Gemini belum diisi. Simpan API Key Anda di tab Profil terlebih dahulu.',
+    );
+  }
+
+  if (!opts.forceRefresh) {
+    const cached = loadCachedAiCoachAnalysis(ctx);
+    if (cached) return cached;
+  }
+
+  const text = await callGeminiText(buildAiCoachPrompt(ctx), { ...opts, apiKey }, {
+    thinkingConfig: { thinkingBudget: 0 },
+    maxOutputTokens: 450,
+    temperature: 0.3,
+  });
+  saveCachedAiCoachAnalysis(ctx, text);
+  return text;
 }
 
 /** Memecah output poin Gemini menjadi daftar bersih untuk dirender di UI. */
