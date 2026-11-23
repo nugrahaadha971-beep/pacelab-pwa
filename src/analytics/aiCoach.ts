@@ -5,8 +5,9 @@ import { fmtPace } from '../plans/pace.ts';
 import { PLAN_LABEL } from '../plans/planSelector.ts';
 
 export const GEMINI_API_KEY_STORAGE_KEY = 'pacelab_gemini_api_key';
+export const GEMINI_MODEL_STORAGE_KEY = 'pacelab_gemini_model';
 export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 export const GEMINI_ENDPOINT = `${GEMINI_API_BASE}/${DEFAULT_GEMINI_MODEL}:generateContent`;
 
 const WORKOUT_TYPE_ID: Record<WorkoutType, string> = {
@@ -65,6 +66,29 @@ export function saveGeminiApiKey(apiKey: string): void {
 export function clearGeminiApiKey(): void {
   try {
     localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
+  } catch {
+    /* penyimpanan tidak tersedia: abaikan */
+  }
+}
+
+function normalizeModelName(model: string): string {
+  return model.replace(/^models\//, '').trim();
+}
+
+export function loadGeminiModel(): string {
+  try {
+    const saved = normalizeModelName(localStorage.getItem(GEMINI_MODEL_STORAGE_KEY) ?? '');
+    return saved || DEFAULT_GEMINI_MODEL;
+  } catch {
+    return DEFAULT_GEMINI_MODEL;
+  }
+}
+
+export function saveGeminiModel(model: string): void {
+  const clean = normalizeModelName(model);
+  try {
+    if (!clean) localStorage.removeItem(GEMINI_MODEL_STORAGE_KEY);
+    else localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, clean);
   } catch {
     /* penyimpanan tidak tersedia: abaikan */
   }
@@ -232,8 +256,22 @@ interface GeminiModelsListResponse {
 }
 
 function modelEndpoint(model: string): string {
-  const clean = model.replace(/^models\//, '').trim();
-  return `${GEMINI_API_BASE}/${clean}:generateContent`;
+  return `${GEMINI_API_BASE}/${normalizeModelName(model)}:generateContent`;
+}
+
+function modelVersionScore(name: string): number {
+  const m = /gemini-(\d+(?:\.\d+)?)/.exec(name);
+  return m ? Number(m[1]) : 0;
+}
+
+function modelPriorityScore(rawName: string): number {
+  const n = rawName.toLowerCase();
+  let score = modelVersionScore(n) * 100;
+  if (!n.includes('exp') && !n.includes('thinking')) score += 20;
+  if (!n.includes('preview')) score += 5;
+  if (!n.includes('lite')) score += 3;
+  if (n.includes('tts') || n.includes('image') || n.includes('audio') || n.includes('live')) score -= 1000;
+  return score;
 }
 
 async function callGenerateContent(
@@ -261,7 +299,11 @@ async function callGenerateContent(
   }
 }
 
-async function findFallbackFlashModel(fetchFn: typeof fetch, apiKey: string): Promise<string | null> {
+async function findFallbackFlashModel(
+  fetchFn: typeof fetch,
+  apiKey: string,
+  excludeModel?: string,
+): Promise<string | null> {
   let listRes: Response;
   try {
     listRes = await fetchFn(GEMINI_API_BASE, {
@@ -277,23 +319,28 @@ async function findFallbackFlashModel(fetchFn: typeof fetch, apiKey: string): Pr
   if (!listRes.ok) return null;
   const data = (await listRes.json().catch(() => null)) as GeminiModelsListResponse | null;
   const models = data?.models ?? [];
+  const excluded = excludeModel ? normalizeModelName(excludeModel).toLowerCase() : '';
 
-  const candidates = models.filter((m) => {
-    const name = (m.name ?? '').toLowerCase();
-    const methods = m.supportedGenerationMethods ?? [];
-    return methods.includes('generateContent') && name.includes('flash');
-  });
+  const candidates = models
+    .map((m) => ({
+      clean: normalizeModelName(m.name ?? ''),
+      methods: m.supportedGenerationMethods ?? [],
+    }))
+    .filter((m) => {
+      const lower = m.clean.toLowerCase();
+      return (
+        Boolean(m.clean) &&
+        lower !== excluded &&
+        m.methods.includes('generateContent') &&
+        lower.includes('flash')
+      );
+    })
+    .sort((a, b) => {
+      const diff = modelPriorityScore(b.clean) - modelPriorityScore(a.clean);
+      return diff !== 0 ? diff : b.clean.localeCompare(a.clean);
+    });
 
-  if (candidates.length === 0) return null;
-
-  const preferred =
-    candidates.find((m) => {
-      const name = (m.name ?? '').toLowerCase();
-      return !name.includes('exp') && !name.includes('thinking');
-    }) ?? candidates[0];
-
-  const cleanName = (preferred.name ?? '').replace(/^models\//, '').trim();
-  return cleanName || null;
+  return candidates[0]?.clean ?? null;
 }
 
 export async function requestAiCoachAnalysis(
@@ -319,13 +366,15 @@ export async function requestAiCoachAnalysis(
 
   const fetchFn = opts.fetchImpl ?? fetch;
   const prompt = buildAiCoachPrompt(ctx);
+  const activeModel = loadGeminiModel();
 
-  let res = await callGenerateContent(fetchFn, DEFAULT_GEMINI_MODEL, apiKey, prompt);
+  let res = await callGenerateContent(fetchFn, activeModel, apiKey, prompt);
 
   if (res.status === 404) {
-    const fallbackModel = await findFallbackFlashModel(fetchFn, apiKey);
-    if (fallbackModel && fallbackModel !== DEFAULT_GEMINI_MODEL) {
+    const fallbackModel = await findFallbackFlashModel(fetchFn, apiKey, activeModel);
+    if (fallbackModel) {
       res = await callGenerateContent(fetchFn, fallbackModel, apiKey, prompt);
+      if (res.ok) saveGeminiModel(fallbackModel);
     }
   }
 
