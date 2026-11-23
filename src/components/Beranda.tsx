@@ -2,6 +2,7 @@ import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis } f
 import type { UserProfile, Workout } from '../analytics/types';
 import { acwr, DAY_MS } from '../analytics/workload';
 import { formatDateId } from '../plans/schedule';
+import { calcShoeMileage, loadShoeConfig } from '../plans/shoeStore';
 import { weeklyKm } from './historyFilter';
 import CoachCard from './CoachCard';
 import { nextSession } from './nextSession';
@@ -16,6 +17,10 @@ export default function Beranda({ profile, workouts }: { profile: UserProfile; w
   const km7 = workouts.filter((w) => w.date > t - 7 * DAY_MS).reduce((s, w) => s + w.distanceKm, 0);
   const weeks = weeklyKm(workouts, t, 8);
   const next = nextSession(profile, workouts, t);
+  const shoe = loadShoeConfig();
+  const shoeName = shoe.name.trim();
+  const shoeMileage = calcShoeMileage(workouts, shoe);
+  const showShoeBanner = Boolean(shoeName) && (shoeMileage.status === 'warn' || shoeMileage.status === 'replace');
   const s = next?.session;
   const showName = s && s.name && s.kind !== 'race' && !['Easy Run', 'Long Run'].includes(s.name);
   const sessionTitle = s
@@ -143,6 +148,19 @@ export default function Beranda({ profile, workouts }: { profile: UserProfile; w
           <p className="text-xs text-slate-400">Batang terang menunjukkan minggu berjalan.</p>
         </div>
       </section>
+
+      {showShoeBanner && (
+        <p
+          role="status"
+          className={`rounded-xl border px-3.5 py-2.5 text-xs font-medium tabular-nums ${
+            shoeMileage.status === 'replace'
+              ? 'border-coral/35 bg-coral/10 text-coral'
+              : 'border-amber-400/35 bg-amber-400/10 text-amber-200'
+          }`}
+        >
+          👟 {shoeName}: {shoeMileage.totalKm}/{shoe.maxKm} km — bantalan mulai menipis.
+        </p>
+      )}
     </div>
   );
 }

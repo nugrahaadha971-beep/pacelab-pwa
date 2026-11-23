@@ -46,7 +46,7 @@ export default function App() {
         {tab === 'program' && <Program profile={profile} workouts={workouts} onProfileChange={reload} />}
         {tab === 'analitik' && <Analitik profile={profile} workouts={workouts} />}
         {tab === 'riwayat' && <Riwayat workouts={workouts} reload={reload} />}
-        {tab === 'profil' && <Profil profile={profile} onSaved={reload} />}
+        {tab === 'profil' && <Profil profile={profile} workouts={workouts} onSaved={reload} />}
       </main>
       <CatatSheet profile={profile} onSaved={reload} />
       <nav aria-label="Navigasi utama" className="fixed inset-x-0 bottom-0 border-t border-navy-700 bg-navy-900/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
