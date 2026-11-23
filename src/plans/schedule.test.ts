@@ -362,3 +362,109 @@ test('Nike tetap tidak berubah secara struktur: id n*, 8 minggu puncak, tanpa te
   assert.ok(all(p).filter((s) => s.kind !== 'race').every((s) => s.id.startsWith('n')));
   assert.ok(all(p).every((s) => !s.test));
 });
+
+test('AI schedule: normalizeScheduleState, resetSchedule, clearAiSchedule, dan parseBackup kompatibel', async () => {
+  const { clearAiSchedule } = await import('./schedule.ts');
+  const aiSession: PlanSession = {
+    id: 'ai-2026-11-17-0',
+    weekNo: 1,
+    phase: 'build',
+    kind: 'recovery',
+    name: 'AI Easy Run',
+    steps: ['Pemanasan 5 menit', 'Lari santai 25 menit'],
+    date: '2026-11-17',
+    baseDate: '2026-11-17',
+    distanceKm: 4.5,
+    durationMin: 30,
+    zone: 'easy',
+    hr: [130, 148],
+    note: 'Jaga napas santai',
+  };
+
+  const normalized = normalizeScheduleState({
+    days: [2, 4, 6, 0],
+    shift: 0,
+    overrides: {},
+    done: { 'ai-2026-11-17-0': true },
+    aiSummary: 'Fokus pemulihan aerobik',
+    aiSessions: [
+      aiSession,
+      { id: 'bad-race', kind: 'race', name: 'Invalid', date: '2026-11-18', steps: [] },
+      { id: 'bad-date', kind: 'speed', name: 'Invalid', date: '2026-02-31', steps: [] },
+    ],
+  });
+  assert.ok(normalized);
+  assert.equal(normalized.aiSummary, 'Fokus pemulihan aerobik');
+  assert.equal(normalized.aiSessions?.length, 1);
+  assert.deepEqual(normalized.aiSessions?.[0], aiSession);
+
+  const backup = parseBackup({ app: 'pacelab', workouts: [], schedule: normalized });
+  assert.deepEqual(backup.schedule, normalized);
+
+  const cleared = clearAiSchedule({ ...normalized, overrides: { 'ai-2026-11-17-0': '2026-11-18', 'n0-1': '2026-11-24' } });
+  assert.equal('aiSessions' in cleared, false);
+  assert.equal('aiSummary' in cleared, false);
+  assert.deepEqual(cleared.overrides, { 'n0-1': '2026-11-24' });
+  assert.deepEqual(cleared.done, { 'ai-2026-11-17-0': true });
+
+  const reset = resetSchedule(normalized);
+  assert.equal('aiSessions' in reset, false);
+  assert.equal('aiSummary' in reset, false);
+  assert.equal(reset.shift, 0);
+  assert.deepEqual(reset.overrides, {});
+  assert.deepEqual(reset.done, { 'ai-2026-11-17-0': true });
+});
+
+test('AI schedule: applyScheduleState mengganti sesi pada tanggal yang dicakup dan tetap menjaga sesi race', () => {
+  const o = opts({ raceIso: '2026-12-20' });
+  const p = buildPlan(o);
+  const firstNonRace = all(p).find((s) => s.kind !== 'race') as PlanSession;
+  const coveredDate = firstNonRace.date;
+
+  const aiSessions: PlanSession[] = [
+    {
+      id: `ai-${coveredDate}-0`,
+      weekNo: 1,
+      phase: 'build',
+      kind: 'speed',
+      name: 'AI Tempo Terkontrol',
+      steps: ['10 menit pemanasan', '15 menit tempo', '5 menit pendinginan'],
+      date: coveredDate,
+      baseDate: coveredDate,
+      distanceKm: null,
+      durationMin: 30,
+      zone: 'interval',
+      hr: [158, 170],
+      note: 'Pertahankan ritme stabil',
+    },
+    {
+      id: 'ai-2026-12-20-1',
+      weekNo: 5,
+      phase: 'taper',
+      kind: 'recovery',
+      name: 'AI Shakeout',
+      steps: [],
+      date: '2026-12-20',
+      baseDate: '2026-12-20',
+      distanceKm: 3,
+      durationMin: 20,
+      zone: 'easy',
+      hr: [125, 140],
+    },
+  ];
+
+  const merged = applyScheduleState(p, { ...DEFAULT_SCHEDULE_STATE, aiSessions, aiSummary: 'Ringkasan AI' }, o.raceIso);
+  const mergedFlat = all(merged);
+  assert.equal(mergedFlat.some((s) => s.id === firstNonRace.id), false, 'sesi standar pada tanggal yang sama diganti AI');
+  const aiInserted = mergedFlat.find((s) => s.id === `ai-${coveredDate}-0`);
+  assert.ok(aiInserted);
+  assert.equal(aiInserted.name, 'AI Tempo Terkontrol');
+  assert.equal(aiInserted.weekNo, firstNonRace.weekNo);
+
+  const race = mergedFlat.find((s) => s.kind === 'race');
+  assert.ok(race, 'sesi race tetap dipertahankan');
+  assert.equal(race.date, '2026-12-20');
+  const clampedAi = mergedFlat.find((s) => s.id === 'ai-2026-12-20-1');
+  assert.ok(clampedAi);
+  assert.equal(clampedAi.date, '2026-12-19', 'sesi non-race tidak boleh jatuh pada hari lomba');
+});

@@ -95,10 +95,77 @@ export interface ScheduleState {
   overrides: Record<string, IsoDate>;
   /** Centang manual "Selesai". */
   done: Record<string, true>;
+  /** Sesi latihan terstruktur hasil penyusunan Gemini AI. */
+  aiSessions?: PlanSession[];
+  /** Ringkasan analisis program hasil Gemini AI. */
+  aiSummary?: string;
 }
 
 export const DEFAULT_SCHEDULE_STATE: ScheduleState = { days: [2, 4, 6, 0], shift: 0, overrides: {}, done: {} };
 export const SHIFT_LIMIT = 60;
+
+const AI_KINDS: readonly SessionKind[] = ['recovery', 'long', 'speed'];
+const VALID_PHASES: readonly Phase[] = ['base', 'build', 'taper', 'race'];
+const VALID_ZONES: readonly Zone[] = ['easy', 'interval', 'race', 'test', 'maf'];
+
+function normalizeAiSession(raw: unknown): PlanSession | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' ? r.id.trim() : '';
+  const name = typeof r.name === 'string' ? r.name.trim() : '';
+  if (!id || !name) return null;
+  if (typeof r.kind !== 'string' || !AI_KINDS.includes(r.kind as SessionKind)) return null;
+  const kind = r.kind as SessionKind;
+  if (!isValidIso(r.date)) return null;
+  const date = r.date;
+  const baseDate = isValidIso(r.baseDate) ? r.baseDate : date;
+  const weekNo = typeof r.weekNo === 'number' && Number.isInteger(r.weekNo) && r.weekNo >= 1 ? r.weekNo : 1;
+  const phase: Phase = typeof r.phase === 'string' && VALID_PHASES.includes(r.phase as Phase) ? (r.phase as Phase) : 'build';
+  const steps = Array.isArray(r.steps)
+    ? r.steps.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim())
+    : [];
+  const distanceKm = typeof r.distanceKm === 'number' && Number.isFinite(r.distanceKm) && r.distanceKm > 0
+    ? Math.round(r.distanceKm * 10) / 10
+    : null;
+  const durationMin = typeof r.durationMin === 'number' && Number.isFinite(r.durationMin) && r.durationMin > 0
+    ? Math.round(r.durationMin)
+    : null;
+  let hr: [number, number] | null = null;
+  if (
+    Array.isArray(r.hr) &&
+    r.hr.length === 2 &&
+    typeof r.hr[0] === 'number' &&
+    typeof r.hr[1] === 'number' &&
+    Number.isFinite(r.hr[0]) &&
+    Number.isFinite(r.hr[1]) &&
+    r.hr[0] > 0 &&
+    r.hr[1] >= r.hr[0]
+  ) {
+    hr = [Math.round(r.hr[0]), Math.round(r.hr[1])];
+  }
+  const zone: Zone = typeof r.zone === 'string' && VALID_ZONES.includes(r.zone as Zone)
+    ? (r.zone as Zone)
+    : kind === 'speed'
+      ? 'interval'
+      : 'easy';
+  const note = typeof r.note === 'string' && r.note.trim() ? r.note.trim() : undefined;
+
+  return {
+    id,
+    weekNo,
+    phase,
+    kind,
+    name,
+    steps,
+    date,
+    baseDate,
+    distanceKm,
+    durationMin,
+    zone,
+    hr,
+    ...(note ? { note } : {}),
+  };
+}
 
 export function normalizeScheduleState(raw: unknown): ScheduleState | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -115,7 +182,15 @@ export function normalizeScheduleState(raw: unknown): ScheduleState | null {
   if (typeof r.done === 'object' && r.done !== null) {
     for (const [k, v] of Object.entries(r.done)) if (v === true) done[k] = true;
   }
-  return { days: days.length ? days : [...DEFAULT_SCHEDULE_STATE.days], shift, overrides, done };
+  const aiSessions = Array.isArray(r.aiSessions)
+    ? r.aiSessions.map(normalizeAiSession).filter((s): s is PlanSession => s !== null)
+    : [];
+  const aiSummary = typeof r.aiSummary === 'string' && r.aiSummary.trim() ? r.aiSummary.trim() : '';
+
+  const out: ScheduleState = { days: days.length ? days : [...DEFAULT_SCHEDULE_STATE.days], shift, overrides, done };
+  if (aiSessions.length > 0) out.aiSessions = aiSessions;
+  if (aiSummary) out.aiSummary = aiSummary;
+  return out;
 }
 
 export function toggleDay(state: ScheduleState, day: number): ScheduleState {
@@ -126,7 +201,18 @@ export function toggleDay(state: ScheduleState, day: number): ScheduleState {
 }
 export const shiftAll = (state: ScheduleState, delta: number): ScheduleState =>
   ({ ...state, shift: Math.max(-SHIFT_LIMIT, Math.min(SHIFT_LIMIT, state.shift + delta)) });
-export const resetSchedule = (state: ScheduleState): ScheduleState => ({ ...state, shift: 0, overrides: {} });
+export function resetSchedule(state: ScheduleState): ScheduleState {
+  const { aiSessions: _aiSessions, aiSummary: _aiSummary, ...rest } = state;
+  return { ...rest, shift: 0, overrides: {} };
+}
+export function clearAiSchedule(state: ScheduleState): ScheduleState {
+  const { aiSessions: _aiSessions, aiSummary: _aiSummary, ...rest } = state;
+  const overrides: Record<string, IsoDate> = {};
+  for (const [k, v] of Object.entries(rest.overrides)) {
+    if (!k.startsWith('ai-')) overrides[k] = v;
+  }
+  return { ...rest, overrides };
+}
 export const setSessionDate = (state: ScheduleState, id: string, iso: IsoDate): ScheduleState =>
   ({ ...state, overrides: { ...state.overrides, [id]: iso } });
 export function toggleDone(state: ScheduleState, id: string): ScheduleState {
@@ -491,10 +577,10 @@ export function buildPlan(o: PlanOptions): Plan {
   return { weeks, daysRemaining, weeksRemaining, baseWeeks: baseCount, totalWeeks: total };
 }
 
-/** Terapkan geser global & tanggal manual. Hari lomba tetap; sesi lain tidak boleh jatuh pada/setelah hari lomba. */
+/** Terapkan geser global, tanggal manual, serta sesi AI bila aktif. Hari lomba tetap; sesi lain tidak boleh jatuh pada/setelah hari lomba. */
 export function applyScheduleState(plan: Plan, state: ScheduleState, raceIso: IsoDate): Plan {
   const lastAllowed = addDays(raceIso, -1);
-  const weeks = plan.weeks.map((w) => ({
+  let weeks: PlanWeek[] = plan.weeks.map((w) => ({
     ...w,
     sessions: w.sessions.map((s) => {
       if (s.kind === 'race') return s;
@@ -503,6 +589,42 @@ export function applyScheduleState(plan: Plan, state: ScheduleState, raceIso: Is
       return { ...s, date };
     }),
   }));
+
+  if (state.aiSessions && state.aiSessions.length > 0 && weeks.length > 0) {
+    const aiMapped: PlanSession[] = [];
+    for (const s of state.aiSessions) {
+      if (s.kind === 'race') continue;
+      let date = state.overrides[s.id] ?? s.date;
+      if (dayNum(date) > dayNum(lastAllowed)) date = lastAllowed;
+      aiMapped.push({ ...s, date });
+    }
+    if (aiMapped.length > 0) {
+      const coveredDates = new Set(aiMapped.map((s) => s.date));
+      weeks = weeks.map((w) => ({
+        ...w,
+        sessions: w.sessions.filter((s) => s.kind === 'race' || !coveredDates.has(s.date)),
+      }));
+      for (const ai of aiMapped) {
+        let targetIdx = weeks.findIndex((w) => dayNum(w.startIso) <= dayNum(ai.date) && dayNum(ai.date) <= dayNum(w.endIso));
+        if (targetIdx < 0) {
+          targetIdx = dayNum(ai.date) < dayNum(weeks[0].startIso) ? 0 : weeks.length - 1;
+        }
+        const targetWeek = weeks[targetIdx];
+        const phase: Phase = targetWeek.phase === 'race' ? 'build' : targetWeek.phase;
+        weeks[targetIdx] = {
+          ...targetWeek,
+          sessions: [...targetWeek.sessions, { ...ai, weekNo: targetWeek.weekNo, phase }],
+        };
+      }
+      weeks = weeks.map((w) => ({
+        ...w,
+        sessions: [...w.sessions].sort(
+          (a, b) => dayNum(a.date) - dayNum(b.date) || (a.kind === 'race' ? 1 : b.kind === 'race' ? -1 : 0),
+        ),
+      }));
+    }
+  }
+
   return { ...plan, weeks };
 }
 

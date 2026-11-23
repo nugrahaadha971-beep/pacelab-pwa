@@ -1,6 +1,9 @@
-import { useState } from 'react';
-import { Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check, ChevronLeft, ChevronRight, RotateCcw, Sparkles } from 'lucide-react';
 import type { UserProfile, Workout } from '../analytics/types';
+import { acwr, cardiacDrift, efTrend } from '../analytics/workload';
+import { generateAiTrainingPlan, loadGeminiApiKey } from '../analytics/aiCoach';
+import type { AiTrainingPlanResult } from '../analytics/aiCoach';
 import { PENALTY_RULES, RACE_KM } from '../analytics/predictor';
 import { applyAdaptation, calibrateFrom3k, evaluateAdaptation, gatherAdaptiveInput, intervalPaceRange, TEST3K_FACTOR, weekPace } from '../plans/adaptiveEngine';
 import { HR_FIRST_RULE, resolveMaxHr, ZONE_LABEL } from '../plans/hrZones';
@@ -8,7 +11,7 @@ import { STRENGTH_NOTE } from '../plans/progressive5k';
 import { mafHr, mafTests, MAF_RULE } from '../plans/maf';
 import { fmtKm, fmtPace, fmtRangeKm, nearestRow, paceKeyFor, paceSecPerKm } from '../plans/pace';
 import {
-  addDays, applyScheduleState, autoCompleted, buildPlan, completedIds, dayNum, flattenPlan, formatDateId, formatDayMonth,
+  addDays, applyScheduleState, autoCompleted, buildPlan, clearAiSchedule, completedIds, dayNum, flattenPlan, formatDateId, formatDayMonth,
   isoFromLocal, isoFromRaceTs, MIN_BASE_WEEKLY_KM, MIN_TRAINING_DAYS, resetSchedule, setSessionDate, shiftAll, swapSessions, toggleDay, toggleDone,
   WEEKDAY_SHORT,
 } from '../plans/schedule';
@@ -136,8 +139,28 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
   const [mafAdj, setMafAdj] = useState(loadMafAdj);
   const [k5Text, setK5Text] = useState(() => loadSaved() ?? (defaultK5Sec != null ? fmtHms(defaultK5Sec) : ''));
   const [fromPrediction, setFromPrediction] = useState(() => loadSaved() == null && defaultK5Sec != null);
+  const [hasApiKey, setHasApiKey] = useState(() => Boolean(loadGeminiApiKey()));
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiPreview, setAiPreview] = useState<AiTrainingPlanResult | null>(null);
   const k5 = parseDuration(k5Text);
   const row = k5 != null ? nearestRow(k5) : null;
+
+  useEffect(() => {
+    const syncOnline = () => setIsOnline(navigator.onLine);
+    const syncKey = () => setHasApiKey(Boolean(loadGeminiApiKey()));
+    window.addEventListener('online', syncOnline);
+    window.addEventListener('offline', syncOnline);
+    window.addEventListener('storage', syncKey);
+    window.addEventListener('focus', syncKey);
+    return () => {
+      window.removeEventListener('online', syncOnline);
+      window.removeEventListener('offline', syncOnline);
+      window.removeEventListener('storage', syncKey);
+      window.removeEventListener('focus', syncKey);
+    };
+  }, []);
 
   const update = (next: ScheduleState) => { setSt(next); saveScheduleState(next); };
   const onK5 = (v: string) => {
@@ -220,12 +243,74 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
   const lastIn = gathered.input;
   /** Durasi & jarak yang ditampilkan (sudah memperhitungkan penyesuaian adaptif). */
   const loadOf = (s: PlanSession): { min: number | null; km: number | null } => {
-    const min = s.adjDurationMin ?? s.durationMin;
-    if (min == null || s.kind === 'speed' || s.kind === 'race') return { min, km: null };
-    const km = s.distanceKm != null && s.durationMin ? (s.distanceKm * min) / s.durationMin : (min * 60) / easyPace;
+    const rawMin = s.adjDurationMin ?? s.durationMin;
+    if (s.kind === 'speed' || s.kind === 'race') return { min: rawMin, km: null };
+    const min = rawMin ?? (s.distanceKm != null ? Math.round((s.distanceKm * easyPace) / 60) : null);
+    if (min == null) return { min: null, km: s.distanceKm ?? null };
+    const km = s.distanceKm != null && s.durationMin ? (s.distanceKm * min) / s.durationMin : s.distanceKm ?? (min * 60) / easyPace;
     return { min, km };
   };
   const weekKm = week.sessions.reduce((sum, r) => sum + (loadOf(byId.get(r.id) as PlanSession).km ?? 0), 0);
+
+  const canGenerateAi = hasApiKey && isOnline && !aiLoading;
+  const hasAiActive = Boolean(st.aiSessions && st.aiSessions.length > 0);
+
+  const handleGenerateAiPlan = async () => {
+    const key = loadGeminiApiKey();
+    setHasApiKey(Boolean(key));
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const now = Date.now();
+      const sorted = [...workouts].filter((w) => w.date <= now).sort((a, b) => b.date - a.date);
+      const latestW = sorted[0];
+      const latestPace = latestW
+        ? latestW.avgPaceSecPerKm > 0
+          ? latestW.avgPaceSecPerKm
+          : latestW.distanceKm > 0
+            ? latestW.durationSec / latestW.distanceKm
+            : null
+        : null;
+      const result = await generateAiTrainingPlan(
+        {
+          profile,
+          curriculum,
+          trainingDays: st.days,
+          acwr: acwr(workouts, profile, now),
+          efTrend: efTrend(workouts, now),
+          latestDriftPct: latestW ? cardiacDrift(latestW.laps) : null,
+          weeklyVolumeKm: startWeeklyKm,
+          latestAvgPaceSec: latestPace,
+          workouts,
+          todayIso,
+          now,
+        },
+        { apiKey: key, isOnline: navigator.onLine },
+      );
+      setAiPreview(result);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Gagal menyusun jadwal latihan AI.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleApplyAiPlan = () => {
+    if (!aiPreview) return;
+    const base = clearAiSchedule(st);
+    update({
+      ...base,
+      aiSessions: aiPreview.sessions,
+      aiSummary: aiPreview.summary,
+    });
+    setAiPreview(null);
+    setAiError(null);
+  };
+
+  const handleRestoreStandard = () => {
+    update(clearAiSchedule(st));
+    setAiError(null);
+  };
 
   return (
     <div className="space-y-4">
@@ -241,6 +326,87 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
           </p>
         )}
         {missed > 0 && <p className="text-sm text-amber-400">{missed} sesi terlewat. Buka "Atur jadwal" untuk menggeser jadwal.</p>}
+
+        {/* Kontrol & Pratinjau Penyusunan Jadwal AI (BYOK Gemini) */}
+        <div className={`${card} space-y-3`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              variant="secondary"
+              block={false}
+              onClick={handleGenerateAiPlan}
+              disabled={!canGenerateAi}
+              className="gap-2 border-sky-400/30 bg-sky-400/10 text-sky-200 hover:bg-sky-400/15"
+            >
+              <Sparkles className="h-4 w-4 text-sky-300" aria-hidden />
+              <span>{aiLoading ? 'Menyusun jadwal AI…' : 'Susun Jadwal dengan AI'}</span>
+            </Button>
+
+            {hasAiActive && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/15 px-2.5 py-1 text-xs font-bold text-emerald-300">
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                <span>Program Aktif: Disusun Gemini AI</span>
+              </span>
+            )}
+          </div>
+
+          {!hasApiKey && (
+            <p className="text-xs text-slate-400">
+              Tambahkan Gemini API Key di tab Profil untuk mengaktifkan penyusunan jadwal AI.
+            </p>
+          )}
+          {hasApiKey && !isOnline && (
+            <p className="text-xs text-slate-400">
+              Perangkat sedang offline. Hubungkan ke internet untuk menyusun jadwal dengan AI.
+            </p>
+          )}
+
+          {hasAiActive && (
+            <div className="sport-subcard space-y-2 p-3">
+              {st.aiSummary && <p className="text-xs leading-relaxed text-slate-300">{st.aiSummary}</p>}
+              <Button variant="secondary" block={false} onClick={handleRestoreStandard} className="gap-1.5 text-xs">
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                <span>Kembalikan Jadwal Standar</span>
+              </Button>
+            </div>
+          )}
+
+          {aiError && (
+            <p role="alert" className="rounded-xl bg-coral/15 px-3 py-2 text-xs leading-relaxed text-coral">
+              {aiError}
+            </p>
+          )}
+
+          {aiPreview && (
+            <div className="sport-subcard space-y-3 border border-sky-400/30 p-3.5" aria-live="polite">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-sky-300">
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                <span>Pratinjau Jadwal Gemini AI ({aiPreview.sessions.length} sesi)</span>
+              </div>
+              <p className="text-sm leading-relaxed text-slate-200">{aiPreview.summary}</p>
+              <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {aiPreview.sessions.map((s) => (
+                  <li key={s.id} className={`rounded-xl border-l-[3px] ${KIND_BORDER[s.kind]} bg-navy-900/90 p-2.5 text-xs`}>
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="font-semibold text-slate-100">{formatDateId(s.date)}</span>
+                      <span className="font-bold text-sky-300">{KIND_LABEL[s.kind]}</span>
+                    </div>
+                    <div className="mt-0.5 font-semibold text-slate-200">{s.name}</div>
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums text-slate-400">
+                      {s.distanceKm != null && <span>Jarak: {s.distanceKm.toFixed(1)} km</span>}
+                      {s.durationMin != null && <span>Durasi: {s.durationMin} menit</span>}
+                      {s.hr && <span>HR: {s.hr[0]}–{s.hr[1]} bpm</span>}
+                    </div>
+                    {s.note && <p className="mt-1 text-slate-400">{s.note}</p>}
+                  </li>
+                ))}
+              </ul>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <Button variant="secondary" onClick={() => setAiPreview(null)}>Batal</Button>
+                <Button onClick={handleApplyAiPlan}>Terapkan ke Jadwal</Button>
+              </div>
+            </div>
+          )}
+        </div>
       </header>
 
       {curriculum === 'maf' && (

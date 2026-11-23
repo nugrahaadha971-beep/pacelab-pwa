@@ -1,5 +1,5 @@
-import { DEFAULT_SCHEDULE_STATE, normalizeScheduleState } from './schedule.ts';
-import type { ScheduleState } from './schedule.ts';
+import { clearAiSchedule, DEFAULT_SCHEDULE_STATE, normalizeScheduleState } from './schedule.ts';
+import type { PlanSession, ScheduleState } from './schedule.ts';
 import { normalizePlanMode } from './planSelector.ts';
 import type { PlanMode } from './planSelector.ts';
 import { normalizeMafAdj } from './maf.ts';
@@ -17,7 +17,26 @@ export function loadScheduleState(): ScheduleState {
 }
 
 export function saveScheduleState(s: ScheduleState): void {
-  try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(s)); } catch { /* penyimpanan tidak tersedia: abaikan */ }
+  try {
+    const normalized = normalizeScheduleState(s) ?? s;
+    localStorage.setItem(SCHEDULE_KEY, JSON.stringify(normalized));
+  } catch { /* penyimpanan tidak tersedia: abaikan */ }
+}
+
+export function saveAiScheduleState(current: ScheduleState, aiSessions: PlanSession[], aiSummary?: string): ScheduleState {
+  const next: ScheduleState = {
+    ...clearAiSchedule(current),
+    ...(aiSessions.length > 0 ? { aiSessions } : {}),
+    ...(aiSummary?.trim() ? { aiSummary: aiSummary.trim() } : {}),
+  };
+  saveScheduleState(next);
+  return next;
+}
+
+export function clearAiScheduleState(current: ScheduleState): ScheduleState {
+  const next = clearAiSchedule(current);
+  saveScheduleState(next);
+  return next;
 }
 
 export const PLAN_MODE_KEY = 'pacelab.planMode';

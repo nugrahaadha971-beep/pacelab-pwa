@@ -1,6 +1,9 @@
 import type { RaceDistance, UserProfile, Workout, WorkoutType } from './types.ts';
 import type { Acwr, EfTrend } from './workload.ts';
-import type { CurriculumId } from '../plans/schedule.ts';
+import { dayNum, isoFromLocal, isoFromRaceTs, isValidIso, WEEKDAY_SHORT } from '../plans/schedule.ts';
+import type { CurriculumId, IsoDate, PlanSession } from '../plans/schedule.ts';
+import type { SessionKind } from '../plans/nike5k.ts';
+import type { Zone } from '../plans/hrZones.ts';
 import { fmtPace } from '../plans/pace.ts';
 import { PLAN_LABEL } from '../plans/planSelector.ts';
 
@@ -34,6 +37,7 @@ export type AiCoachErrorCode =
   | 'bad_request'
   | 'network'
   | 'empty_response'
+  | 'invalid_json'
   | 'api_error';
 
 export class AiCoachError extends Error {
@@ -302,7 +306,14 @@ async function callGenerateContent(
   model: string,
   apiKey: string,
   prompt: string,
+  generationConfig?: Record<string, unknown>,
 ): Promise<Response> {
+  const payload: Record<string, unknown> = {
+    contents: [{ parts: [{ text: prompt }] }],
+  };
+  if (generationConfig) {
+    payload.generationConfig = generationConfig;
+  }
   try {
     return await fetchFn(modelEndpoint(model), {
       method: 'POST',
@@ -310,9 +321,7 @@ async function callGenerateContent(
         'Content-Type': 'application/json',
         'x-goog-api-key': apiKey,
       },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-      }),
+      body: JSON.stringify(payload),
     });
   } catch {
     throw new AiCoachError(
@@ -328,11 +337,12 @@ async function attemptModel(
   apiKey: string,
   prompt: string,
   retryDelayMs: number,
+  generationConfig?: Record<string, unknown>,
 ): Promise<Response> {
-  let res = await callGenerateContent(fetchFn, model, apiKey, prompt);
+  let res = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig);
   if (res.status === 503) {
     await sleep(retryDelayMs);
-    res = await callGenerateContent(fetchFn, model, apiKey, prompt);
+    res = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig);
   }
   return res;
 }
@@ -383,9 +393,10 @@ async function findFallbackCandidates(
   return candidates;
 }
 
-export async function requestAiCoachAnalysis(
-  ctx: AiCoachContext,
+async function callGeminiText(
+  prompt: string,
   opts: RequestAiCoachOptions = {},
+  generationConfig?: Record<string, unknown>,
 ): Promise<string> {
   const apiKey = (opts.apiKey ?? loadGeminiApiKey()).trim();
   if (!apiKey) {
@@ -406,16 +417,15 @@ export async function requestAiCoachAnalysis(
 
   const fetchFn = opts.fetchImpl ?? fetch;
   const retryDelayMs = opts.retryDelayMs ?? RETRY_503_DELAY_MS;
-  const prompt = buildAiCoachPrompt(ctx);
   const activeModel = loadGeminiModel();
 
-  let res = await attemptModel(fetchFn, activeModel, apiKey, prompt, retryDelayMs);
+  let res = await attemptModel(fetchFn, activeModel, apiKey, prompt, retryDelayMs, generationConfig);
   if (res.ok) {
     saveGeminiModel(activeModel);
   } else if (isFallbackStatus(res.status)) {
     const candidates = await findFallbackCandidates(fetchFn, apiKey, activeModel);
     for (const candidate of candidates) {
-      res = await attemptModel(fetchFn, candidate, apiKey, prompt, retryDelayMs);
+      res = await attemptModel(fetchFn, candidate, apiKey, prompt, retryDelayMs, generationConfig);
       if (res.ok) {
         saveGeminiModel(candidate);
         break;
@@ -501,6 +511,13 @@ export async function requestAiCoachAnalysis(
   return text;
 }
 
+export async function requestAiCoachAnalysis(
+  ctx: AiCoachContext,
+  opts: RequestAiCoachOptions = {},
+): Promise<string> {
+  return callGeminiText(buildAiCoachPrompt(ctx), opts);
+}
+
 /** Memecah output poin Gemini menjadi daftar bersih untuk dirender di UI. */
 export function parseCoachPoints(raw: string): string[] {
   const lines = raw
@@ -510,4 +527,256 @@ export function parseCoachPoints(raw: string): string[] {
     .map((l) => l.replace(/^(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*(.*?)\*\*/g, '$1').trim())
     .filter(Boolean);
   return lines.slice(0, 6);
+}
+
+// ───────────────────────── AI Training Plan Generator ─────────────────────────
+
+export interface AiTrainingPlanInput {
+  profile: Pick<UserProfile, 'age' | 'restingHr' | 'maxHr' | 'targetDistance' | 'targetRaceDate' | 'targetTimeSec'>;
+  curriculum: CurriculumId;
+  trainingDays: number[];
+  acwr: Acwr;
+  efTrend: EfTrend;
+  latestDriftPct: number | null;
+  weeklyVolumeKm: number;
+  latestAvgPaceSec: number | null;
+  workouts: Workout[];
+  todayIso?: IsoDate;
+  now?: number;
+}
+
+export interface AiTrainingPlanResult {
+  summary: string;
+  sessions: PlanSession[];
+}
+
+const VALID_PLAN_KINDS: readonly Exclude<SessionKind, 'race'>[] = ['recovery', 'long', 'speed'];
+
+export function buildAiTrainingPlanPrompt(input: AiTrainingPlanInput): string {
+  const now = input.now ?? Date.now();
+  const todayIso = input.todayIso ?? isoFromLocal(now);
+  const raceIso = input.profile.targetRaceDate > 0 ? isoFromRaceTs(input.profile.targetRaceDate) : null;
+  const curriculumLabel = PLAN_LABEL[input.curriculum] ?? input.curriculum;
+  const daysText = input.trainingDays.length > 0
+    ? input.trainingDays.map((d) => WEEKDAY_SHORT[d] ?? String(d)).join(', ')
+    : 'Sel, Kam, Sab, Min';
+
+  const acwrText =
+    input.acwr.ratio != null
+      ? `${input.acwr.ratio.toFixed(2)} (${ACWR_STATUS_ID[input.acwr.status]})`
+      : ACWR_STATUS_ID[input.acwr.status];
+
+  let efText = 'Belum cukup data';
+  if (input.efTrend.recent != null && input.efTrend.changePct != null) {
+    const sign = input.efTrend.changePct > 0 ? '+' : '';
+    efText = `${input.efTrend.recent.toFixed(2)} (${sign}${input.efTrend.changePct.toFixed(1)}% vs 14 hari sebelumnya)`;
+  } else if (input.efTrend.recent != null) {
+    efText = `${input.efTrend.recent.toFixed(2)} (belum ada pembanding)`;
+  }
+
+  const driftText =
+    input.latestDriftPct != null && Number.isFinite(input.latestDriftPct)
+      ? `${input.latestDriftPct.toFixed(1)}%`
+      : 'Belum ada data';
+
+  const latestPaceText =
+    input.latestAvgPaceSec != null && Number.isFinite(input.latestAvgPaceSec) && input.latestAvgPaceSec > 0
+      ? `${fmtPace(input.latestAvgPaceSec)} /km`
+      : 'Belum ada data';
+
+  const recentWorkouts = [...input.workouts]
+    .filter((w) => w.date <= now)
+    .sort((a, b) => b.date - a.date)
+    .slice(0, 10);
+
+  const historyBlock =
+    recentWorkouts.length > 0
+      ? recentWorkouts
+          .map((w, i) => {
+            const pace =
+              w.avgPaceSecPerKm > 0
+                ? fmtPace(w.avgPaceSecPerKm)
+                : w.distanceKm > 0
+                  ? fmtPace(w.durationSec / w.distanceKm)
+                  : '-';
+            const parts = [
+              isoFromLocal(w.date),
+              WORKOUT_TYPE_ID[w.workoutType] ?? w.workoutType,
+              `${w.distanceKm.toFixed(1)} km`,
+              fmtDurationMinSec(w.durationSec),
+              `pace ${pace}/km`,
+            ];
+            if (w.avgHr != null) parts.push(`HR ${Math.round(w.avgHr)} bpm`);
+            if (w.rpe != null) parts.push(`RPE ${w.rpe}/10`);
+            return `${i + 1}. ${parts.join(' · ')}`;
+          })
+          .join('\n')
+      : 'Belum ada riwayat latihan tercatat.';
+
+  return [
+    'Anda adalah pelatih lari pribadi berbasis sains olahraga. Susun program latihan terstruktur untuk 2–4 minggu ke depan (atau hingga sebelum hari lomba bila lebih dekat) dalam Bahasa Indonesia.',
+    'Kembalikan HANYA JSON valid tanpa teks tambahan di luar JSON, sesuai skema persis berikut:',
+    '{ "summary": string, "sessions": [{ "date": "YYYY-MM-DD", "kind": "recovery" | "long" | "speed", "name": string, "distanceKm": number | null, "durationMin": number | null, "hr": [number, number] | null, "steps": string[], "note": string }] }',
+    '',
+    'Aturan penyusunan:',
+    `- Tanggal hari ini: ${todayIso}. Tanggal sesi harus >= ${todayIso}${raceIso ? ` dan WAJIB lebih awal dari tanggal lomba (${raceIso}) — jangan buat sesi pada atau setelah ${raceIso}` : ''}.`,
+    `- Utamakan hari latihan rutin pelari: ${daysText}.`,
+    `- Sesuaikan beban dan jenis sesi dengan kurikulum aktif (${curriculumLabel} / ${input.curriculum}), nilai ACWR, tren EF, dan cardiac drift.`,
+    '- Gunakan kind "recovery" untuk lari santai/pemulihan, "long" untuk lari terjauh mingguan, dan "speed" untuk interval/tempo/tes (jika kurikulum maf, hindari speed berat kecuali tes MAF).',
+    '- Untuk recovery/long sertakan durationMin dan distanceKm yang realistis; untuk speed sertakan durationMin, steps detail (pemanasan, ulangan, pendinginan), dan note.',
+    '',
+    'Profil Pelari:',
+    `- Usia: ${input.profile.age} tahun`,
+    `- HR istirahat: ${input.profile.restingHr} bpm`,
+    `- HR maksimal: ${input.profile.maxHr} bpm`,
+    `- Target jarak lomba: ${input.profile.targetDistance}`,
+    `- Tanggal target lomba: ${raceIso ?? 'Belum diatur'}`,
+    `- Target waktu lomba: ${fmtDurationMinSec(input.profile.targetTimeSec)}`,
+    '',
+    'Metrik Terkini:',
+    `- Kurikulum aktif: ${curriculumLabel} (${input.curriculum})`,
+    `- Hari latihan rutin: ${daysText}`,
+    `- ACWR: ${acwrText}`,
+    `- Tren EF: ${efText}`,
+    `- Cardiac drift terakhir: ${driftText}`,
+    `- Volume mingguan rata-rata (28 hari): ${input.weeklyVolumeKm.toFixed(1)} km/minggu`,
+    `- Pace rata-rata terbaru: ${latestPaceText}`,
+    '',
+    'Maksimal 10 riwayat sesi terakhir:',
+    historyBlock,
+  ].join('\n');
+}
+
+function stripJsonCodeFence(raw: string): string {
+  const trimmed = raw.trim();
+  const match = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  return match ? match[1].trim() : trimmed;
+}
+
+export function parseAiTrainingPlanResponse(raw: string, input: AiTrainingPlanInput): AiTrainingPlanResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripJsonCodeFence(raw));
+  } catch {
+    throw new AiCoachError(
+      'invalid_json',
+      'Respons jadwal AI bukan JSON yang valid. Silakan coba susun ulang jadwal.',
+    );
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new AiCoachError('invalid_json', 'Struktur respons jadwal AI tidak valid.');
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const summary = typeof obj.summary === 'string' ? obj.summary.trim() : '';
+  if (!summary) {
+    throw new AiCoachError('invalid_json', 'Ringkasan analisis dari AI tidak boleh kosong.');
+  }
+
+  if (!Array.isArray(obj.sessions) || obj.sessions.length === 0) {
+    throw new AiCoachError('invalid_json', 'Daftar sesi jadwal AI kosong atau tidak valid.');
+  }
+
+  const raceIso = input.profile.targetRaceDate > 0 ? isoFromRaceTs(input.profile.targetRaceDate) : null;
+  const raceDayNum = raceIso ? dayNum(raceIso) : null;
+
+  const sessions: PlanSession[] = obj.sessions.map((item, index) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new AiCoachError('invalid_json', `Sesi AI ke-${index + 1} tidak berbentuk objek yang valid.`);
+    }
+    const r = item as Record<string, unknown>;
+
+    const date = r.date;
+    if (!isValidIso(date)) {
+      throw new AiCoachError('invalid_json', `Tanggal sesi AI ke-${index + 1} tidak valid.`);
+    }
+    if (raceDayNum != null && dayNum(date) >= raceDayNum) {
+      throw new AiCoachError(
+        'invalid_json',
+        `Tanggal sesi AI (${date}) melewati atau jatuh pada hari lomba (${raceIso}).`,
+      );
+    }
+
+    if (typeof r.kind !== 'string' || !VALID_PLAN_KINDS.includes(r.kind as Exclude<SessionKind, 'race'>)) {
+      throw new AiCoachError('invalid_json', `Jenis sesi AI ke-${index + 1} tidak valid.`);
+    }
+    const kind = r.kind as Exclude<SessionKind, 'race'>;
+
+    const name = typeof r.name === 'string' ? r.name.trim() : '';
+    if (!name) {
+      throw new AiCoachError('invalid_json', `Nama sesi AI ke-${index + 1} tidak boleh kosong.`);
+    }
+
+    let distanceKm: number | null = null;
+    if (r.distanceKm !== null && r.distanceKm !== undefined) {
+      if (typeof r.distanceKm !== 'number' || !Number.isFinite(r.distanceKm) || r.distanceKm <= 0) {
+        throw new AiCoachError('invalid_json', `Jarak sesi AI ke-${index + 1} tidak valid.`);
+      }
+      distanceKm = Math.round(r.distanceKm * 10) / 10;
+    }
+
+    let durationMin: number | null = null;
+    if (r.durationMin !== null && r.durationMin !== undefined) {
+      if (typeof r.durationMin !== 'number' || !Number.isFinite(r.durationMin) || r.durationMin <= 0) {
+        throw new AiCoachError('invalid_json', `Durasi sesi AI ke-${index + 1} tidak valid.`);
+      }
+      durationMin = Math.round(r.durationMin);
+    }
+
+    let hr: [number, number] | null = null;
+    if (r.hr !== null && r.hr !== undefined) {
+      if (
+        !Array.isArray(r.hr) ||
+        r.hr.length !== 2 ||
+        typeof r.hr[0] !== 'number' ||
+        typeof r.hr[1] !== 'number' ||
+        !Number.isFinite(r.hr[0]) ||
+        !Number.isFinite(r.hr[1]) ||
+        r.hr[0] <= 0 ||
+        r.hr[1] < r.hr[0]
+      ) {
+        throw new AiCoachError('invalid_json', `Target detak jantung sesi AI ke-${index + 1} tidak valid.`);
+      }
+      hr = [Math.round(r.hr[0]), Math.round(r.hr[1])];
+    }
+
+    if (!Array.isArray(r.steps) || r.steps.some((s) => typeof s !== 'string')) {
+      throw new AiCoachError('invalid_json', `Langkah sesi AI ke-${index + 1} harus berupa daftar teks.`);
+    }
+    const steps = r.steps.map((s) => s.trim()).filter(Boolean);
+
+    const note = typeof r.note === 'string' && r.note.trim() ? r.note.trim() : undefined;
+    const zone: Zone = kind === 'speed' ? 'interval' : input.curriculum === 'maf' ? 'maf' : 'easy';
+
+    return {
+      id: `ai-${date}-${index}`,
+      weekNo: 1,
+      phase: 'build',
+      kind,
+      name,
+      steps,
+      date,
+      baseDate: date,
+      distanceKm,
+      durationMin,
+      zone,
+      hr,
+      ...(note ? { note } : {}),
+    };
+  });
+
+  return { summary, sessions };
+}
+
+export async function generateAiTrainingPlan(
+  input: AiTrainingPlanInput,
+  opts: RequestAiCoachOptions = {},
+): Promise<AiTrainingPlanResult> {
+  const prompt = buildAiTrainingPlanPrompt(input);
+  const raw = await callGeminiText(prompt, opts, {
+    responseMimeType: 'application/json',
+    temperature: 0.4,
+  });
+  return parseAiTrainingPlanResponse(raw, input);
 }

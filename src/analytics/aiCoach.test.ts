@@ -174,3 +174,194 @@ test('parseCoachPoints membersihkan awalan bullet, nomor, dan bold markdown', ()
   const pts = parseCoachPoints('- **Evaluasi**: Bagus.\n2. **Fokus**: Pertahankan HR.\n• Istirahat cukup.');
   assert.deepEqual(pts, ['Evaluasi: Bagus.', 'Fokus: Pertahankan HR.', 'Istirahat cukup.']);
 });
+
+test('buildAiTrainingPlanPrompt memuat profil, metrik lengkap, hari latihan rutin, dan maksimal 10 riwayat sesi', async () => {
+  const { buildAiTrainingPlanPrompt } = await import('./aiCoach.ts');
+  const now = Date.UTC(2026, 10, 22, 12, 0, 0);
+  const workouts = Array.from({ length: 12 }, (_, i) => makeWorkout(i + 1, i));
+  const prompt = buildAiTrainingPlanPrompt({
+    profile: {
+      age: 34,
+      restingHr: 54,
+      maxHr: 186,
+      targetDistance: '5K',
+      targetRaceDate: Date.UTC(2027, 0, 31),
+      targetTimeSec: 1500,
+    },
+    curriculum: 'progressive5k',
+    trainingDays: [2, 4, 6, 0],
+    acwr: { acute: 120, chronicWeekly: 110, ratio: 1.09, status: 'sweet_spot' },
+    efTrend: { recent: 1.45, prior: 1.38, changePct: 5.07, improving: true },
+    latestDriftPct: 4.2,
+    weeklyVolumeKm: 24.5,
+    latestAvgPaceSec: 360,
+    workouts,
+    todayIso: '2026-11-22',
+    now,
+  });
+
+  assert.match(prompt, /Usia: 34 tahun/);
+  assert.match(prompt, /HR istirahat: 54 bpm/);
+  assert.match(prompt, /HR maksimal: 186 bpm/);
+  assert.match(prompt, /2027-01-31/);
+  assert.match(prompt, /25:00/);
+  assert.match(prompt, /Sel, Kam, Sab, Min/);
+  assert.match(prompt, /4\.2%/);
+  assert.match(prompt, /24\.5 km\/minggu/);
+  assert.match(prompt, /6:00 \/km/);
+  assert.match(prompt, /10\. /);
+  assert.equal(prompt.includes('11. '), false);
+});
+
+test('generateAiTrainingPlan mengirim generationConfig JSON, memvalidasi ketat, dan menyusun PlanSession lengkap', async () => {
+  const { generateAiTrainingPlan } = await import('./aiCoach.ts');
+  const now = Date.UTC(2026, 10, 22, 12, 0, 0);
+  const input = {
+    profile: {
+      age: 34,
+      restingHr: 54,
+      maxHr: 186,
+      targetDistance: '5K' as const,
+      targetRaceDate: Date.UTC(2026, 11, 20),
+      targetTimeSec: 1500,
+    },
+    curriculum: 'progressive5k' as const,
+    trainingDays: [2, 4, 6, 0],
+    acwr: { acute: 120, chronicWeekly: 110, ratio: 1.09, status: 'sweet_spot' as const },
+    efTrend: { recent: 1.45, prior: 1.38, changePct: 5.07, improving: true },
+    latestDriftPct: 3.1,
+    weeklyVolumeKm: 22,
+    latestAvgPaceSec: 360,
+    workouts: [makeWorkout(1, 1)],
+    todayIso: '2026-11-22',
+    now,
+  };
+
+  let capturedBody: Record<string, unknown> | null = null;
+  const okFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    summary: 'Beban optimal, fokus progresi aerobik bertahap.',
+                    sessions: [
+                      {
+                        date: '2026-11-24',
+                        kind: 'recovery',
+                        name: 'Easy Aerobic Run',
+                        distanceKm: 5,
+                        durationMin: 32,
+                        hr: [132, 148],
+                        steps: ['Pemanasan 5 menit', 'Lari santai 27 menit'],
+                        note: 'Pertahankan HR rendah',
+                      },
+                      {
+                        date: '2026-11-28',
+                        kind: 'speed',
+                        name: 'Interval 400m',
+                        distanceKm: null,
+                        durationMin: 40,
+                        hr: [165, 178],
+                        steps: ['10 menit pemanasan', '5 x 400m cepat'],
+                        note: 'Istirahat 90 detik antar ulangan',
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }) as typeof fetch;
+
+  const result = await generateAiTrainingPlan(input, { apiKey: 'AIzaDemo', isOnline: true, fetchImpl: okFetch });
+  assert.deepEqual(capturedBody?.generationConfig, { responseMimeType: 'application/json', temperature: 0.4 });
+  assert.equal(result.summary, 'Beban optimal, fokus progresi aerobik bertahap.');
+  assert.equal(result.sessions.length, 2);
+  assert.equal(result.sessions[0].id, 'ai-2026-11-24-0');
+  assert.equal(result.sessions[0].zone, 'easy');
+  assert.equal(result.sessions[1].id, 'ai-2026-11-28-1');
+  assert.equal(result.sessions[1].zone, 'interval');
+
+  const pastRaceFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    summary: 'Ringkasan',
+                    sessions: [
+                      {
+                        date: '2026-12-21',
+                        kind: 'recovery',
+                        name: 'Lewat lomba',
+                        distanceKm: 4,
+                        durationMin: 25,
+                        hr: null,
+                        steps: [],
+                        note: '',
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      { status: 200 },
+    )) as typeof fetch;
+
+  await assert.rejects(
+    () => generateAiTrainingPlan(input, { apiKey: 'AIzaDemo', isOnline: true, fetchImpl: pastRaceFetch }),
+    (err: unknown) => err instanceof AiCoachError && err.code === 'invalid_json',
+  );
+
+  const badKindFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    summary: 'Ringkasan',
+                    sessions: [
+                      {
+                        date: '2026-11-24',
+                        kind: 'race',
+                        name: 'Salah kind',
+                        distanceKm: 5,
+                        durationMin: 25,
+                        hr: null,
+                        steps: [],
+                        note: '',
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      { status: 200 },
+    )) as typeof fetch;
+
+  await assert.rejects(
+    () => generateAiTrainingPlan(input, { apiKey: 'AIzaDemo', isOnline: true, fetchImpl: badKindFetch }),
+    (err: unknown) => err instanceof AiCoachError && err.code === 'invalid_json',
+  );
+});
