@@ -5,8 +5,9 @@ import { fmtPace } from '../plans/pace.ts';
 import { PLAN_LABEL } from '../plans/planSelector.ts';
 
 export const GEMINI_API_KEY_STORAGE_KEY = 'pacelab_gemini_api_key';
-export const GEMINI_ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const GEMINI_ENDPOINT = `${GEMINI_API_BASE}/${DEFAULT_GEMINI_MODEL}:generateContent`;
 
 const WORKOUT_TYPE_ID: Record<WorkoutType, string> = {
   easy: 'Easy Run',
@@ -221,6 +222,80 @@ interface GeminiGenerateResponse {
   };
 }
 
+interface GeminiModelInfo {
+  name?: string;
+  supportedGenerationMethods?: string[];
+}
+
+interface GeminiModelsListResponse {
+  models?: GeminiModelInfo[];
+}
+
+function modelEndpoint(model: string): string {
+  const clean = model.replace(/^models\//, '').trim();
+  return `${GEMINI_API_BASE}/${clean}:generateContent`;
+}
+
+async function callGenerateContent(
+  fetchFn: typeof fetch,
+  model: string,
+  apiKey: string,
+  prompt: string,
+): Promise<Response> {
+  try {
+    return await fetchFn(modelEndpoint(model), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+    });
+  } catch {
+    throw new AiCoachError(
+      'network',
+      'Gagal terhubung ke server Gemini. Periksa koneksi internet Anda lalu coba lagi.',
+    );
+  }
+}
+
+async function findFallbackFlashModel(fetchFn: typeof fetch, apiKey: string): Promise<string | null> {
+  let listRes: Response;
+  try {
+    listRes = await fetchFn(GEMINI_API_BASE, {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': apiKey,
+      },
+    });
+  } catch {
+    return null;
+  }
+
+  if (!listRes.ok) return null;
+  const data = (await listRes.json().catch(() => null)) as GeminiModelsListResponse | null;
+  const models = data?.models ?? [];
+
+  const candidates = models.filter((m) => {
+    const name = (m.name ?? '').toLowerCase();
+    const methods = m.supportedGenerationMethods ?? [];
+    return methods.includes('generateContent') && name.includes('flash');
+  });
+
+  if (candidates.length === 0) return null;
+
+  const preferred =
+    candidates.find((m) => {
+      const name = (m.name ?? '').toLowerCase();
+      return !name.includes('exp') && !name.includes('thinking');
+    }) ?? candidates[0];
+
+  const cleanName = (preferred.name ?? '').replace(/^models\//, '').trim();
+  return cleanName || null;
+}
+
 export async function requestAiCoachAnalysis(
   ctx: AiCoachContext,
   opts: RequestAiCoachOptions = {},
@@ -245,23 +320,13 @@ export async function requestAiCoachAnalysis(
   const fetchFn = opts.fetchImpl ?? fetch;
   const prompt = buildAiCoachPrompt(ctx);
 
-  let res: Response;
-  try {
-    res = await fetchFn(GEMINI_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-      }),
-    });
-  } catch {
-    throw new AiCoachError(
-      'network',
-      'Gagal terhubung ke server Gemini. Periksa koneksi internet Anda lalu coba lagi.',
-    );
+  let res = await callGenerateContent(fetchFn, DEFAULT_GEMINI_MODEL, apiKey, prompt);
+
+  if (res.status === 404) {
+    const fallbackModel = await findFallbackFlashModel(fetchFn, apiKey);
+    if (fallbackModel && fallbackModel !== DEFAULT_GEMINI_MODEL) {
+      res = await callGenerateContent(fetchFn, fallbackModel, apiKey, prompt);
+    }
   }
 
   if (!res.ok) {
@@ -273,19 +338,21 @@ export async function requestAiCoachAnalysis(
       );
     }
 
-    let errBody: GeminiApiErrorBody | null = null;
+    let errData: GeminiApiErrorBody | null = null;
     try {
-      errBody = rawText ? (JSON.parse(rawText) as GeminiApiErrorBody) : null;
+      errData = rawText ? (JSON.parse(rawText) as GeminiApiErrorBody) : null;
     } catch {
-      errBody = null;
+      errData = null;
     }
-    const msg = errBody?.error?.message ?? '';
-    const statusText = errBody?.error?.status ?? '';
+    const apiMessage = errData?.error?.message?.trim() ?? '';
+    const statusText = errData?.error?.status ?? '';
 
     if (res.status === 429 || statusText === 'RESOURCE_EXHAUSTED') {
       throw new AiCoachError(
         'quota_exceeded',
-        'Kuota API Gemini habis atau batas permintaan tercapai (429). Coba lagi nanti atau periksa kuota akun Google AI Anda.',
+        apiMessage
+          ? `Gemini (429): ${apiMessage}`
+          : 'Kuota API Gemini habis atau batas permintaan tercapai (429). Coba lagi nanti atau periksa kuota akun Google AI Anda.',
       );
     }
 
@@ -293,24 +360,30 @@ export async function requestAiCoachAnalysis(
       res.status === 401 ||
       res.status === 403 ||
       statusText === 'PERMISSION_DENIED' ||
-      (res.status === 400 && /api[_ ]?key|key not valid|invalid.*key/i.test(msg))
+      (res.status === 400 && /api[_ ]?key|key not valid|invalid.*key/i.test(apiMessage))
     ) {
       throw new AiCoachError(
         'invalid_key',
-        'API Key Gemini tidak valid atau ditolak (400/403). Periksa kembali key Anda di tab Profil.',
+        apiMessage
+          ? `Gemini (${res.status}): ${apiMessage}`
+          : `API Key Gemini tidak valid atau ditolak (${res.status}). Periksa kembali key Anda di tab Profil.`,
       );
     }
 
     if (res.status === 400) {
       throw new AiCoachError(
         'bad_request',
-        msg ? `Permintaan ditolak Gemini (400): ${msg}` : 'Permintaan ke Gemini tidak valid (400).',
+        apiMessage ? `Gemini (400): ${apiMessage}` : 'Permintaan ke Gemini tidak valid (400).',
       );
     }
 
     throw new AiCoachError(
       'api_error',
-      `Layanan Gemini mengalami gangguan (${res.status}). Silakan coba lagi nanti.`,
+      apiMessage
+        ? `Gemini (${res.status}): ${apiMessage}`
+        : rawText.trim()
+          ? `Gemini (${res.status}): ${rawText.trim()}`
+          : `Layanan Gemini mengalami gangguan (${res.status}). Silakan coba lagi nanti.`,
     );
   }
 
