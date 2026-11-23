@@ -1,13 +1,17 @@
-import { Activity, AlertTriangle, ArrowRight, Heart, TrendingUp } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Activity, AlertTriangle, ArrowRight, Heart, Sparkles, TrendingUp } from 'lucide-react';
 import type { UserProfile, Workout } from '../analytics/types';
 import { acwr, cardiacDrift, DAY_MS, efTrend } from '../analytics/workload';
 import type { AcwrStatus } from '../analytics/workload';
 import { predictAll, velocityFor, ZONE_FRACTION } from '../analytics/predictor';
 import { coachAdvice, DRIFT_WARN_PCT } from '../analytics/coachEngine';
 import type { SessionRec } from '../analytics/coachEngine';
+import { loadGeminiApiKey, parseCoachPoints, requestAiCoachAnalysis } from '../analytics/aiCoach';
+import { mafHr, mafTests } from '../plans/maf';
 import { fmtPace } from '../plans/pace';
 import { resolvePlan, selectBestPlan } from '../plans/planSelector';
-import { loadPlanMode } from '../plans/scheduleStore';
+import { loadMafAdj, loadPlanMode } from '../plans/scheduleStore';
+import { Button } from './ui';
 
 type PaceZoneKey = keyof typeof ZONE_FRACTION;
 
@@ -191,6 +195,60 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
   const meta = STATUS_BADGE[load.status];
   const driftHigh = drift != null && drift > DRIFT_WARN_PCT;
 
+  const [hasApiKey, setHasApiKey] = useState(() => Boolean(loadGeminiApiKey()));
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const syncOnline = () => setIsOnline(navigator.onLine);
+    const syncKey = () => setHasApiKey(Boolean(loadGeminiApiKey()));
+    window.addEventListener('online', syncOnline);
+    window.addEventListener('offline', syncOnline);
+    window.addEventListener('storage', syncKey);
+    window.addEventListener('focus', syncKey);
+    return () => {
+      window.removeEventListener('online', syncOnline);
+      window.removeEventListener('offline', syncOnline);
+      window.removeEventListener('storage', syncKey);
+      window.removeEventListener('focus', syncKey);
+    };
+  }, []);
+
+  const maf = mafHr(profile.age, loadMafAdj());
+  const mafPts = mafTests(workouts, maf);
+  const latestMafPaceSec = mafPts.length ? mafPts[mafPts.length - 1].paceSecPerKm : null;
+  const canAnalyzeAi = hasApiKey && isOnline && !aiLoading;
+
+  const handleAnalyzeAi = async () => {
+    const key = loadGeminiApiKey();
+    setHasApiKey(Boolean(key));
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const text = await requestAiCoachAnalysis(
+        {
+          profile,
+          curriculum,
+          acwr: load,
+          efTrend: ef,
+          latestMafPaceSec,
+          workouts,
+          now: t,
+        },
+        { apiKey: key, isOnline: navigator.onLine },
+      );
+      setAiResult(text);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Gagal meminta analisis AI.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const aiPoints = aiResult ? parseCoachPoints(aiResult) : [];
+
   return (
     <div className="space-y-4">
       <section
@@ -302,6 +360,57 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
             )}
           </div>
         )}
+
+        {/* Analisis Mendalam AI (BYOK Gemini, opsional & online-only) */}
+        <div className="mt-4 border-t border-white/[0.06] pt-3.5">
+          <Button
+            variant="secondary"
+            onClick={handleAnalyzeAi}
+            disabled={!canAnalyzeAi}
+            className="gap-2 border-sky-400/30 bg-sky-400/10 text-sky-200 hover:bg-sky-400/15"
+          >
+            <Sparkles className="h-4 w-4 text-sky-300" aria-hidden />
+            <span>{aiLoading ? 'Menganalisis latihan…' : 'Analisis Mendalam AI'}</span>
+          </Button>
+
+          {!hasApiKey && (
+            <p className="mt-2 text-xs text-slate-400">
+              Tambahkan Gemini API Key di tab Profil untuk mengaktifkan Analisis Mendalam AI.
+            </p>
+          )}
+          {hasApiKey && !isOnline && (
+            <p className="mt-2 text-xs text-slate-400">
+              Perangkat sedang offline. Hubungkan ke internet untuk memakai Analisis Mendalam AI.
+            </p>
+          )}
+
+          {aiError && (
+            <p role="alert" className="mt-2.5 rounded-xl bg-coral/15 px-3 py-2 text-xs leading-relaxed text-coral">
+              {aiError}
+            </p>
+          )}
+
+          {aiResult && (
+            <div className="mt-3 sport-subcard p-3" aria-live="polite">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-sky-300">
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                <span>Evaluasi &amp; Saran Gemini AI</span>
+              </div>
+              {aiPoints.length > 0 ? (
+                <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-200">
+                  {aiPoints.map((point, idx) => (
+                    <li key={idx} className="flex gap-2">
+                      <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-200">{aiResult}</p>
+              )}
+            </div>
+          )}
+        </div>
       </section>
 
     </div>

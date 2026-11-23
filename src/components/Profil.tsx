@@ -1,11 +1,12 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { clearAll, db, exportBackup, importBackup } from '../db/database';
 import { tanakaMaxHr } from '../analytics/workload';
+import { clearGeminiApiKey, loadGeminiApiKey, saveGeminiApiKey } from '../analytics/aiCoach';
 import type { RaceDistance, UserProfile } from '../analytics/types';
 import { parseDuration } from '../parsers/manual';
 import { fmtHms } from './format';
 import ConfirmDialog from './ConfirmDialog';
-import { Button, Field, PrimaryButton, ScreenHeader, SelectField } from './ui';
+import { Button, Field, PrimaryButton, ScreenHeader, SelectField, StatusPill } from './ui';
 
 const DISTANCES: RaceDistance[] = ['5K', '10K', '21.1K', '42.2K'];
 
@@ -30,6 +31,9 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
   const [maxHrText, setMaxHrText] = useState(String(profile?.maxHr ?? ''));
   const [pendingImport, setPendingImport] = useState<File | null>(null);
   const [askWipe, setAskWipe] = useState(false);
+  const [geminiKey, setGeminiKey] = useState(() => loadGeminiApiKey());
+  const [hasGeminiKey, setHasGeminiKey] = useState(() => Boolean(loadGeminiApiKey()));
+  const [geminiMsg, setGeminiMsg] = useState<Msg | null>(null);
 
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -104,6 +108,29 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
     onSaved();
   };
 
+  const saveGemini = () => {
+    const trimmed = geminiKey.trim();
+    if (!trimmed) {
+      setGeminiMsg({ text: 'Masukkan Gemini API Key terlebih dahulu.', ok: false });
+      return;
+    }
+    try {
+      saveGeminiApiKey(trimmed);
+      setGeminiKey(trimmed);
+      setHasGeminiKey(true);
+      setGeminiMsg({ text: 'API Key Gemini tersimpan secara lokal di browser ini.', ok: true });
+    } catch (err) {
+      setGeminiMsg({ text: err instanceof Error ? err.message : 'Gagal menyimpan API Key.', ok: false });
+    }
+  };
+
+  const removeGemini = () => {
+    clearGeminiApiKey();
+    setGeminiKey('');
+    setHasGeminiKey(false);
+    setGeminiMsg({ text: 'API Key Gemini dihapus dari perangkat ini.', ok: true });
+  };
+
   return (
     <div className="space-y-4">
       <ScreenHeader title={profile ? 'Profil & Pengaturan' : 'Atur profil dulu'} subtitle={profile ? 'Data diri, target lomba, dan cadangan' : undefined} />
@@ -141,6 +168,32 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
           <input type="file" accept=".json" onChange={pickImport} className="sr-only" />
         </label>
         {backupMsg && <Notice msg={backupMsg} />}
+      </section>
+
+      <section className="space-y-3 sport-card p-4" aria-labelledby="gemini-coach-judul">
+        <div className="flex items-center justify-between gap-2">
+          <h2 id="gemini-coach-judul" className="text-base font-bold">Gemini AI Coach</h2>
+          <StatusPill tone={hasGeminiKey ? 'good' : 'info'}>
+            {hasGeminiKey ? 'Key tersimpan' : 'Belum diatur'}
+          </StatusPill>
+        </div>
+        <p className="text-sm text-slate-400">
+          Opsional (BYOK). API Key hanya disimpan di penyimpanan lokal browser ini dan tidak pernah disertakan dalam cadangan JSON.
+        </p>
+        <Field
+          label="Gemini API Key"
+          type="password"
+          autoComplete="off"
+          placeholder="AIza..."
+          value={geminiKey}
+          onChange={(e) => setGeminiKey(e.target.value)}
+          hint="Dipakai saat Anda menekan tombol Analisis Mendalam AI di Saran Pelatih."
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="secondary" onClick={saveGemini}>Simpan</Button>
+          <Button variant="danger" onClick={removeGemini} disabled={!hasGeminiKey && !geminiKey.trim()}>Hapus Key</Button>
+        </div>
+        {geminiMsg && <Notice msg={geminiMsg} />}
       </section>
 
       {profile && (

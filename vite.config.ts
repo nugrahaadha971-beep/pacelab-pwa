@@ -5,6 +5,11 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
   // Relatif: berfungsi di subpath GitHub Pages tanpa mengganti nama repositori
   base: './',
+  server: {
+    host: '0.0.0.0',
+    port: 3000,
+    allowedHosts: true,
+  },
   plugins: [
     react(),
     VitePWA({
