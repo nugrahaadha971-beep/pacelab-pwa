@@ -21,6 +21,14 @@ export interface Workout {
   efficiencyFactor?: number | null;
   laps: LapSplit[];
   note?: string;
+  shoeId?: string;
+  elapsedSec?: number;
+  splitRatio?: number;
+  hrZonePct?: [number, number, number, number, number];
+  runSec?: number;
+  walkSec?: number;
+  runPaceSecPerKm?: number | null;
+  walkCount?: number;
 }
 
 export type WorkoutDraft = Omit<Workout, 'id' | 'trimp' | 'efficiencyFactor'>;

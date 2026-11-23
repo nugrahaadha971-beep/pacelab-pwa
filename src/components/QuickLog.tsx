@@ -6,8 +6,9 @@ import type { UserProfile, WorkoutType } from '../analytics/types';
 import { parseFit } from '../parsers/fitParser';
 import { parseGpx } from '../parsers/gpxParser';
 import { parseDuration } from '../parsers/manual';
+import { getDefaultShoeId, loadShoes } from '../plans/shoeStore';
 import { todayStr } from './format';
-import { Field, PrimaryButton, SegmentedTabs } from './ui';
+import { Field, PrimaryButton, SegmentedTabs, SelectField } from './ui';
 
 const TYPES: { id: WorkoutType; label: string; desc: string }[] = [
   { id: 'easy', label: 'Easy', desc: 'Santai, masih bisa ngobrol' },
@@ -126,6 +127,9 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
 
+  const [activeShoes] = useState(() => loadShoes().filter((s) => !s.retired));
+  const [shoeId, setShoeId] = useState(() => getDefaultShoeId(activeShoes) ?? '');
+
   // Impor
   const [impType, setImpType] = useState<WorkoutType>('easy');
   const [impRpe, setImpRpe] = useState<number | null>(null);
@@ -154,7 +158,9 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const parsed = /\.fit$/i.test(file.name) ? parseFit(await file.arrayBuffer()) : parseGpx(await file.text());
+      const parsed = /\.fit$/i.test(file.name)
+        ? parseFit(await file.arrayBuffer())
+        : parseGpx(await file.text(), profile.maxHr);
       if (parsed.avgHr == null && impRpe == null) {
         setImpWarn(true);
         return fail('File ini tidak punya data detak jantung. Pilih tingkat kelelahan (RPE) di atas, lalu pilih berkas lagi agar Poin Usaha bisa dihitung.');
@@ -162,7 +168,12 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
       if (isDuplicate(await db.workouts.toArray(), parsed)) {
         return fail('Sesi ini sudah ada (waktu dan jarak sama). Impor dilewati.');
       }
-      await db.workouts.add(finalizeWorkout({ ...parsed, workoutType: impType, rpe: impRpe }, profile));
+      await db.workouts.add(finalizeWorkout({
+        ...parsed,
+        workoutType: impType,
+        rpe: impRpe,
+        ...(shoeId ? { shoeId } : {}),
+      }, profile));
       setImpWarn(false);
       setMsg({ text: `Sesi ${parsed.source.toUpperCase()} tersimpan: ${parsed.distanceKm.toFixed(2)} km.`, ok: true });
       onSaved();
@@ -193,6 +204,7 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
         date: ts, source: 'manual', workoutType: manType,
         distanceKm, durationSec, avgPaceSecPerKm: durationSec / distanceKm,
         avgHr: null, maxHr: null, avgCadence: null, elevationGain: null, rpe, laps: [],
+        ...(shoeId ? { shoeId } : {}),
       }, profile));
     } catch (err) {
       return fail(err instanceof Error ? err.message : 'Gagal menyimpan sesi.');
@@ -201,6 +213,16 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
     setMsg({ text: 'Sesi tersimpan. Poin Usaha 7 hari diperbarui.', ok: true });
     onSaved();
   };
+
+  const shoePicker = activeShoes.length > 0 ? (
+    <SelectField label="Sepatu" value={shoeId} onChange={(e) => setShoeId(e.target.value)}>
+      {activeShoes.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.name}{s.isDefault ? ' (Utama)' : ''}
+        </option>
+      ))}
+    </SelectField>
+  ) : null;
 
   return (
     <div className="space-y-4">
@@ -216,6 +238,7 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
               placeholder="8,0" autoComplete="off" error={errs.distance} />
           </div>
           <TypePicker value={manType} onChange={setManType} />
+          {shoePicker}
           <RpeScale value={rpe} onChange={setRpe} error={errs.rpe} />
           {msg && <Notice msg={msg} />}
           <PrimaryButton type="submit">Simpan sesi</PrimaryButton>
@@ -223,6 +246,7 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
       ) : (
         <div id="catat-panel-impor" role="tabpanel" aria-labelledby="catat-tab-impor" className="space-y-4">
           <TypePicker value={impType} onChange={setImpType} />
+          {shoePicker}
           <RpeScale value={impRpe} onChange={(v) => { setImpRpe(v); if (v != null) setImpWarn(false); }} hint="Wajib diisi bila file tidak punya data detak jantung."
             warn={impWarn ? 'File ini tidak punya data detak jantung. Pilih RPE di sini, lalu pilih berkas lagi.' : undefined} />
           <label className="flex min-h-[48px] w-full cursor-pointer items-center justify-center rounded-2xl bg-volt px-4 py-2 font-display text-sm font-extrabold text-[#070709] shadow-[0_0_20px_rgba(200,255,0,0.25)] focus-within:ring-2 focus-within:ring-volt focus-within:ring-offset-2 focus-within:ring-offset-[#070709]">

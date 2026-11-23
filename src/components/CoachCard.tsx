@@ -15,6 +15,7 @@ import { mafHr, mafTests } from '../plans/maf';
 import { fmtPace } from '../plans/pace';
 import { resolvePlan, selectBestPlan } from '../plans/planSelector';
 import { loadMafAdj, loadPlanMode } from '../plans/scheduleStore';
+import AiLoader from './AiLoader';
 import { Button } from './ui';
 
 type PaceZoneKey = keyof typeof ZONE_FRACTION;
@@ -332,13 +333,19 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
           </p>
         )}
 
+        {aiLoading && (
+          <div className="mt-3">
+            <AiLoader />
+          </div>
+        )}
+
         {aiError && (
           <p role="alert" className="mt-2.5 rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-xs leading-relaxed text-coral">
             {aiError}
           </p>
         )}
 
-        {aiResult && (
+        {!aiLoading && aiResult && (
           <div className="mt-3 sport-subcard p-3.5" aria-live="polite">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-volt">

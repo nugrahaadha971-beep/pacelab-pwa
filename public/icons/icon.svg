@@ -1,1 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#0b1220"/><circle cx="256" cy="256" r="145.92" fill="none" stroke="#ff6b5e" stroke-width="25.6"/><rect x="232.96" y="64" width="46.08" height="38.4" fill="#ff6b5e"/><line x1="256" y1="256" x2="312.32" y2="199.68" stroke="#34d399" stroke-width="22.53" stroke-linecap="round"/><circle cx="256" cy="256" r="20.48" fill="#34d399"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="112" fill="#070709"/>
+  <rect x="8" y="8" width="496" height="496" rx="104" stroke="#C8FF00" stroke-opacity="0.22" stroke-width="4"/>
+  <!-- Kinetic Track Chevron -->
+  <path d="M112 136H164L218 256L164 376H112L166 256L112 136Z" fill="#C8FF00"/>
+  <path d="M174 136H196L250 256L196 376H174L228 256L174 136Z" fill="#38BDF8"/>
+  <!-- Geometric P + Heart-Rate Pulse -->
+  <path d="M226 136H348L396 184V256L348 304H272V376H226V136ZM272 178V262H330L354 238V202L330 178H272Z" fill="#C8FF00"/>
+  <path d="M254 220H286L298 192L314 248L326 220H366" stroke="#070709" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

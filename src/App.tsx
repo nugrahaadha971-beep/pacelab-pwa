@@ -8,6 +8,7 @@ import Analitik from './components/Analitik';
 import Riwayat from './components/Riwayat';
 import Profil from './components/Profil';
 import CatatSheet from './components/CatatSheet';
+import BrandLogo from './components/BrandLogo';
 
 type Tab = 'beranda' | 'program' | 'analitik' | 'riwayat' | 'profil';
 
@@ -33,6 +34,16 @@ export default function App() {
   };
   useEffect(() => { void reload(); }, []);
   useEffect(() => { window.scrollTo(0, 0); }, [tab]);
+  useEffect(() => {
+    const splash = document.getElementById('initial-splash');
+    if (!splash) return;
+    splash.style.opacity = '0';
+    splash.style.pointerEvents = 'none';
+    const timer = window.setTimeout(() => {
+      splash.remove();
+    }, 320);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   if (profile === undefined) return <p className="p-6 text-slate-400">Memuat…</p>;
   if (profile === null) {
@@ -52,9 +63,10 @@ export default function App() {
           <button
             type="button"
             onClick={() => setTab('beranda')}
-            className="font-display text-lg font-bold tracking-tight text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt"
+            aria-label="PACELAB Beranda"
+            className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt"
           >
-            PACE<span className="text-volt">LAB</span>
+            <BrandLogo size={32} showText />
           </button>
           <button
             type="button"

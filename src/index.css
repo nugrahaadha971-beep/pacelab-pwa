@@ -37,3 +37,24 @@ h1, h2, h3 {
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 }
+
+@keyframes pacelab-wave {
+  0%, 100% {
+    transform: scaleY(0.35);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pacelab-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+

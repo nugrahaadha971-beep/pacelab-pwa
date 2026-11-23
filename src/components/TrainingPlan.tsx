@@ -19,6 +19,7 @@ import type { CurriculumId, Phase, PlanSession, ScheduleState } from '../plans/s
 import { loadMafAdj, loadScheduleState, saveMafAdj, saveScheduleState } from '../plans/scheduleStore';
 import { parseDuration } from '../parsers/manual';
 import { fmtDate, fmtHms, todayStr } from './format';
+import AiLoader from './AiLoader';
 import MafCard from './MafCard';
 import Sheet from './Sheet';
 import { KIND_BORDER, KIND_LABEL } from './sessionMeta';
@@ -369,6 +370,8 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
               </Button>
             </div>
           )}
+
+          {aiLoading && <AiLoader />}
 
           {aiError && (
             <p role="alert" className="rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-xs leading-relaxed text-coral">

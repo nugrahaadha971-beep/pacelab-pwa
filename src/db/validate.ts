@@ -24,6 +24,15 @@ export function normalizeWorkout(raw: unknown): Workout | null {
     }
   }
 
+  const hrZonePct =
+    Array.isArray(raw.hrZonePct) &&
+    raw.hrZonePct.length === 5 &&
+    raw.hrZonePct.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0)
+      ? (raw.hrZonePct as [number, number, number, number, number])
+      : undefined;
+  const nonNegNum = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+
   return {
     date: raw.date,
     source: raw.source as Source,
@@ -40,6 +49,14 @@ export function normalizeWorkout(raw: unknown): Workout | null {
     efficiencyFactor: numOrNull(raw.efficiencyFactor),
     laps,
     ...(typeof raw.note === 'string' && raw.note ? { note: raw.note } : {}),
+    ...(typeof raw.shoeId === 'string' && raw.shoeId ? { shoeId: raw.shoeId } : {}),
+    ...(pos(raw.elapsedSec) ? { elapsedSec: raw.elapsedSec } : {}),
+    ...(pos(raw.splitRatio) ? { splitRatio: raw.splitRatio } : {}),
+    ...(hrZonePct ? { hrZonePct } : {}),
+    ...(nonNegNum(raw.runSec) !== undefined ? { runSec: nonNegNum(raw.runSec) } : {}),
+    ...(nonNegNum(raw.walkSec) !== undefined ? { walkSec: nonNegNum(raw.walkSec) } : {}),
+    ...(raw.runPaceSecPerKm === null || pos(raw.runPaceSecPerKm) ? { runPaceSecPerKm: raw.runPaceSecPerKm } : {}),
+    ...(nonNegNum(raw.walkCount) !== undefined ? { walkCount: nonNegNum(raw.walkCount) } : {}),
   };
 }
 

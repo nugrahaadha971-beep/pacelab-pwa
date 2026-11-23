@@ -5,6 +5,7 @@ import type { Workout, WorkoutType } from '../analytics/types';
 import { RACE_KM } from '../analytics/predictor';
 import { cardiacDrift } from '../analytics/workload';
 import { fmtPace } from '../plans/pace';
+import { loadShoes } from '../plans/shoeStore';
 import { fmtDate, fmtHms } from './format';
 import { filterWorkouts, type DistFilter, type SourceFilter, type TypeFilter } from './historyFilter';
 import { Button, ScreenHeader, SelectField } from './ui';
@@ -44,6 +45,8 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
   const [panel, setPanel] = useState(false);
   const [sel, setSel] = useState<Workout | null>(null);
   const [ask, setAsk] = useState<Workout | null>(null);
+  const shoes = useMemo(() => loadShoes(), [workouts]);
+  const shoeNameById = useMemo(() => new Map(shoes.map((s) => [s.id, s.name])), [shoes]);
   const sorted = useMemo(() => [...workouts].sort((a, b) => b.date - a.date), [workouts]);
   const list = useMemo(() => filterWorkouts(sorted, { q, ...f }, RACE_KM), [sorted, q, f]);
 
@@ -131,9 +134,10 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
             </div>
           </dl>
 
-          {(w.avgHr != null || w.note) && (
+          {(w.avgHr != null || w.note || (w.shoeId && shoeNameById.has(w.shoeId))) && (
             <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/[0.06] pt-2 text-xs text-slate-400">
               {w.avgHr != null && <span className="shrink-0 font-medium tabular-nums text-slate-300">HR rata-rata: {w.avgHr} bpm</span>}
+              {w.shoeId && shoeNameById.has(w.shoeId) && <span className="shrink-0 text-slate-300">👟 {shoeNameById.get(w.shoeId)}</span>}
               {w.note && <span className="min-w-0 flex-1 truncate">{w.note}</span>}
             </div>
           )}
@@ -201,7 +205,10 @@ function ConfirmDelete({ w, onCancel, onConfirm }: { w: Workout; onCancel: () =>
 function Detail({ w, onClose, onDelete, onSaved }: { w: Workout; onClose: () => void; onDelete: () => void; onSaved: () => void }) {
   const [note, setNote] = useState(w.note ?? '');
   const [type, setType] = useState<WorkoutType>(w.workoutType);
+  const [shoes] = useState(() => loadShoes());
+  const [shoeId, setShoeId] = useState(w.shoeId ?? '');
   const [saved, setSaved] = useState(false);
+  const selectableShoes = shoes.filter((s) => !s.retired || s.id === w.shoeId);
   const drift = cardiacDrift(w.laps);
   const stats: [string, string][] = [
     ['Jarak', `${w.distanceKm.toFixed(2)} km`],
@@ -216,7 +223,7 @@ function Detail({ w, onClose, onDelete, onSaved }: { w: Workout; onClose: () => 
 
   const save = async () => {
     if (w.id == null) return;
-    await db.workouts.update(w.id, { note: note.trim(), workoutType: type });
+    await db.workouts.update(w.id, { note: note.trim(), workoutType: type, shoeId: shoeId || undefined });
     setSaved(true);
     onSaved();
   };
@@ -236,6 +243,18 @@ function Detail({ w, onClose, onDelete, onSaved }: { w: Workout; onClose: () => 
           {TYPE_IDS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
         </SelectField>
       </div>
+      {selectableShoes.length > 0 && (
+        <div className="mt-3">
+          <SelectField label="Sepatu" value={shoeId} onChange={(e) => { setShoeId(e.target.value); setSaved(false); }}>
+            <option value="">Otomatis (Sepatu Utama)</option>
+            {selectableShoes.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{s.isDefault ? ' (Utama)' : s.retired ? ' (Pensiun)' : ''}
+              </option>
+            ))}
+          </SelectField>
+        </div>
+      )}
       <label className="mt-3 block text-sm font-semibold text-slate-200">Catatan sesi
         <textarea value={note} onChange={(e) => { setNote(e.target.value); setSaved(false); }} rows={2} className={`${textarea} font-normal`} />
       </label>

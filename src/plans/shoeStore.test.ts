@@ -1,6 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { calcShoeMileage, DEFAULT_SHOE, normalizeShoeConfig } from './shoeStore.ts';
+import {
+  addShoe,
+  calcAllShoesMileage,
+  calcShoeMileage,
+  DEFAULT_SHOE,
+  deleteShoe,
+  migrateLegacyShoe,
+  normalizeShoeConfig,
+  normalizeShoeList,
+  retireShoe,
+  setDefaultShoe,
+  type ShoeItem,
+} from './shoeStore.ts';
 
 const ts = (iso: string) => new Date(`${iso}T07:00:00`).getTime();
 
@@ -54,5 +66,64 @@ describe('shoeStore', () => {
     const over = calcShoeMileage([{ date: ts('2026-11-01'), distanceKm: 850 }], { name: 'A', initialKm: 0, maxKm: 800 });
     assert.equal(over.status, 'replace');
     assert.equal(over.remainingKm, 0);
+  });
+
+  it('migrateLegacyShoe memigrasikan data pacelab_shoe lama menjadi ShoeItem pertama dengan isDefault: true', () => {
+    const migrated = migrateLegacyShoe({ name: 'ASICS Cumulus', initialKm: 120, maxKm: 750 });
+    assert.equal(migrated.length, 1);
+    assert.equal(migrated[0].name, 'ASICS Cumulus');
+    assert.equal(migrated[0].initialKm, 120);
+    assert.equal(migrated[0].maxKm, 750);
+    assert.equal(migrated[0].isDefault, true);
+  });
+
+  it('calcAllShoesMileage menghitung jarak per shoeId, mengarahkan sesi tanpa shoeId ke isDefault, dan mengecualikan sepatu retired', () => {
+    const shoes: ShoeItem[] = [
+      { id: 's1', name: 'Daily Trainer', initialKm: 50, maxKm: 800, isDefault: true },
+      { id: 's2', name: 'Tempo Shoe', initialKm: 580, maxKm: 800, isDefault: false },
+      { id: 's3', name: 'Old Shoe', initialKm: 790, maxKm: 800, isDefault: false, retired: true },
+    ];
+    const workouts = [
+      { distanceKm: 10 }, // tanpa shoeId -> masuk ke s1 (isDefault)
+      { distanceKm: 15, shoeId: 's1' },
+      { distanceKm: 20, shoeId: 's2' }, // 580 + 20 = 600 (75% -> warn)
+      { distanceKm: 5, shoeId: 's3' }, // sepatu retired tidak tampil & tidak masuk default
+    ];
+
+    const res = calcAllShoesMileage(workouts, shoes);
+    assert.equal(res.length, 2);
+    assert.equal(res[0].shoe.id, 's1');
+    assert.equal(res[0].totalKm, 75);
+    assert.equal(res[0].status, 'good');
+
+    assert.equal(res[1].shoe.id, 's2');
+    assert.equal(res[1].totalKm, 600);
+    assert.equal(res[1].remainingKm, 200);
+    assert.equal(res[1].pct, 75);
+    assert.equal(res[1].status, 'warn');
+  });
+
+  it('addShoe, setDefaultShoe, retireShoe, dan deleteShoe selalu menjaga tepat satu sepatu aktif utama', () => {
+    let list = addShoe([], { name: 'Peg 41', initialKm: 0, maxKm: 800 });
+    assert.equal(list.length, 1);
+    assert.equal(list[0].isDefault, true);
+
+    list = addShoe(list, { name: 'Vaporfly', initialKm: 10, maxKm: 400 });
+    assert.equal(list.length, 2);
+    assert.equal(list[0].isDefault, true);
+    assert.equal(list[1].isDefault, false);
+
+    list = setDefaultShoe(list, list[1].id);
+    assert.equal(list[0].isDefault, false);
+    assert.equal(list[1].isDefault, true);
+
+    list = retireShoe(list, list[1].id);
+    assert.equal(list[1].retired, true);
+    assert.equal(list[1].isDefault, false);
+    assert.equal(list[0].isDefault, true);
+
+    list = deleteShoe(list, list[0].id);
+    assert.equal(list.filter((s) => !s.retired).length, 0);
+    assert.equal(normalizeShoeList(list).every((s) => !s.isDefault), true);
   });
 });
