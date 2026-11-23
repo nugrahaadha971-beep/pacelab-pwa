@@ -169,7 +169,7 @@ export default function Beranda({ profile, workouts }: { profile: UserProfile; w
                   : 'border-amber-400/35 bg-amber-400/10 text-amber-200'
               }`}
             >
-              👟 {entry.shoe.name}: <span className="font-mono font-bold">{entry.totalKm}/{entry.shoe.maxKm} km</span> —{' '}
+              👟 {entry.shoe.name}: <span className="font-mono font-bold">{entry.totalKm.toFixed(2)}/{entry.shoe.maxKm} km</span> —{' '}
               {entry.status === 'replace' ? 'bantalan sudah aus, pertimbangkan ganti baru.' : 'bantalan mulai menipis.'}
             </p>
           ))}

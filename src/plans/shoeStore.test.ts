@@ -9,8 +9,10 @@ import {
   migrateLegacyShoe,
   normalizeShoeConfig,
   normalizeShoeList,
+  parseKmInput,
   retireShoe,
   setDefaultShoe,
+  updateShoeKm,
   type ShoeItem,
 } from './shoeStore.ts';
 
@@ -77,14 +79,14 @@ describe('shoeStore', () => {
     assert.equal(migrated[0].isDefault, true);
   });
 
-  it('calcAllShoesMileage menghitung jarak per shoeId, mengarahkan sesi tanpa shoeId ke isDefault, dan mengecualikan sepatu retired', () => {
+  it('calcAllShoesMileage hanya menjumlahkan sesi dengan shoeId === shoe.id (tidak mengaitkan sesi lama tanpa shoeId)', () => {
     const shoes: ShoeItem[] = [
       { id: 's1', name: 'Daily Trainer', initialKm: 50, maxKm: 800, isDefault: true },
       { id: 's2', name: 'Tempo Shoe', initialKm: 580, maxKm: 800, isDefault: false },
       { id: 's3', name: 'Old Shoe', initialKm: 790, maxKm: 800, isDefault: false, retired: true },
     ];
     const workouts = [
-      { distanceKm: 10 }, // tanpa shoeId -> masuk ke s1 (isDefault)
+      { distanceKm: 10 }, // tanpa shoeId -> TIDAK boleh dijumlahkan otomatis ke s1
       { distanceKm: 15, shoeId: 's1' },
       { distanceKm: 20, shoeId: 's2' }, // 580 + 20 = 600 (75% -> warn)
       { distanceKm: 5, shoeId: 's3' }, // sepatu retired tidak tampil & tidak masuk default
@@ -93,14 +95,37 @@ describe('shoeStore', () => {
     const res = calcAllShoesMileage(workouts, shoes);
     assert.equal(res.length, 2);
     assert.equal(res[0].shoe.id, 's1');
-    assert.equal(res[0].totalKm, 75);
+    assert.equal(res[0].loggedKm, 15);
+    assert.equal(res[0].totalKm, 65);
     assert.equal(res[0].status, 'good');
 
     assert.equal(res[1].shoe.id, 's2');
+    assert.equal(res[1].loggedKm, 20);
     assert.equal(res[1].totalKm, 600);
     assert.equal(res[1].remainingKm, 200);
     assert.equal(res[1].pct, 75);
     assert.equal(res[1].status, 'warn');
+  });
+
+  it('parseKmInput, addShoe, dan updateShoeKm menormalisasi koma ke titik dan menjaga presisi 2 desimal (misal 2.19 km)', () => {
+    assert.equal(parseKmInput('2,19'), 2.19);
+    assert.equal(parseKmInput(' 2.194 '), 2.19);
+    assert.equal(parseKmInput('2.196'), 2.2);
+    assert.equal(parseKmInput('abc'), null);
+
+    let list = addShoe([], { name: 'Novablast 5', initialKm: '2,19', maxKm: 800 });
+    assert.equal(list[0].initialKm, 2.19);
+
+    // Meski ada riwayat lari lama tanpa shoeId, sepatu baru tetap menunjukkan 2.19 km
+    const oldRuns = [{ distanceKm: 42.2 }, { distanceKm: 10 }];
+    const mileage = calcAllShoesMileage(oldRuns, list);
+    assert.equal(mileage[0].totalKm, 2.19);
+    assert.equal(mileage[0].remainingKm, 797.81);
+
+    // Edit KM manual
+    list = updateShoeKm(list, list[0].id, '14,55');
+    assert.equal(list[0].initialKm, 14.55);
+    assert.equal(calcAllShoesMileage(oldRuns, list)[0].totalKm, 14.55);
   });
 
   it('addShoe, setDefaultShoe, retireShoe, dan deleteShoe selalu menjaga tepat satu sepatu aktif utama', () => {

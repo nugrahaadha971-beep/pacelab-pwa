@@ -10,10 +10,12 @@ import {
   DEFAULT_MAX_KM,
   deleteShoe,
   loadShoes,
+  parseKmInput,
   retireShoe,
   saveShoes,
   setDefaultShoe,
   SHOE_STATUS_TEXT,
+  updateShoeKm,
   type ShoeStatus,
 } from '../plans/shoeStore';
 import { parseDuration } from '../parsers/manual';
@@ -59,6 +61,8 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
   const [newShoeName, setNewShoeName] = useState('');
   const [newShoeInitialKm, setNewShoeInitialKm] = useState('0');
   const [newShoeMaxKm, setNewShoeMaxKm] = useState(String(DEFAULT_MAX_KM));
+  const [editingShoeId, setEditingShoeId] = useState<string | null>(null);
+  const [editingShoeKm, setEditingShoeKm] = useState('');
   const [shoeMsg, setShoeMsg] = useState<Msg | null>(null);
 
   const save = async (e: FormEvent<HTMLFormElement>) => {
@@ -162,17 +166,17 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
   const handleAddShoe = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const trimmedName = newShoeName.trim();
-    const initVal = Number((newShoeInitialKm || '0').replace(',', '.'));
-    const maxVal = Number((newShoeMaxKm || String(DEFAULT_MAX_KM)).replace(',', '.'));
+    const initVal = newShoeInitialKm.trim() === '' ? 0 : parseKmInput(newShoeInitialKm);
+    const maxVal = newShoeMaxKm.trim() === '' ? DEFAULT_MAX_KM : parseKmInput(newShoeMaxKm);
     if (!trimmedName) {
       setShoeMsg({ text: 'Masukkan nama sepatu terlebih dahulu.', ok: false });
       return;
     }
-    if (!Number.isFinite(initVal) || initVal < 0) {
+    if (initVal === null || initVal < 0) {
       setShoeMsg({ text: 'Km awal harus 0 atau lebih.', ok: false });
       return;
     }
-    if (!Number.isFinite(maxVal) || maxVal <= 0) {
+    if (maxVal === null || maxVal <= 0) {
       setShoeMsg({ text: 'Maks km harus lebih dari 0.', ok: false });
       return;
     }
@@ -182,7 +186,27 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     setNewShoeInitialKm('0');
     setNewShoeMaxKm(String(DEFAULT_MAX_KM));
     setShowAddShoe(false);
-    setShoeMsg({ text: `Sepatu "${trimmedName}" ditambahkan.`, ok: true });
+    setShoeMsg({ text: `Sepatu "${trimmedName}" ditambahkan (${initVal.toFixed(2)} km).`, ok: true });
+  };
+
+  const handleOpenEditKm = (id: string, currentInitialKm: number) => {
+    setEditingShoeId(id);
+    setEditingShoeKm(String(currentInitialKm));
+    setShoeMsg(null);
+  };
+
+  const handleSaveEditKm = (e: FormEvent<HTMLFormElement>, id: string, shoeName: string) => {
+    e.preventDefault();
+    const parsedKm = editingShoeKm.trim() === '' ? 0 : parseKmInput(editingShoeKm);
+    if (parsedKm === null || parsedKm < 0) {
+      setShoeMsg({ text: 'Km awal harus berupa angka 0 atau lebih.', ok: false });
+      return;
+    }
+    const updated = saveShoes(updateShoeKm(shoes, id, parsedKm));
+    setShoes(updated);
+    setEditingShoeId(null);
+    setEditingShoeKm('');
+    setShoeMsg({ text: `Jarak awal "${shoeName}" diperbarui menjadi ${parsedKm.toFixed(2)} km.`, ok: true });
   };
 
   const handleSetDefaultShoe = (id: string) => {
@@ -194,12 +218,14 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
   const handleRetireShoe = (id: string) => {
     const updated = saveShoes(retireShoe(shoes, id));
     setShoes(updated);
+    if (editingShoeId === id) setEditingShoeId(null);
     setShoeMsg({ text: 'Sepatu dipensiunkan dari daftar aktif.', ok: true });
   };
 
   const handleDeleteShoe = (id: string) => {
     const updated = saveShoes(deleteShoe(shoes, id));
     setShoes(updated);
+    if (editingShoeId === id) setEditingShoeId(null);
     setShoeMsg({ text: 'Sepatu dihapus dari daftar.', ok: true });
   };
 
@@ -309,7 +335,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
                   <div>
                     <div className="flex items-baseline justify-between gap-2 text-xs">
                       <span className="font-mono font-bold text-slate-100">
-                        {entry.totalKm} / {entry.shoe.maxKm} km
+                        {entry.totalKm.toFixed(2)} / {entry.shoe.maxKm} km
                       </span>
                       <span className="font-mono text-slate-400">{Math.min(100, Math.round(entry.pct))}%</span>
                     </div>
@@ -328,12 +354,50 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
                     </div>
                     <p className="mt-1.5 text-xs text-slate-400">
                       {entry.status === 'good'
-                        ? `Tersisa ${entry.remainingKm} km sebelum batas pakai.`
-                        : `${SHOE_STATUS_TEXT[entry.status]}${entry.remainingKm > 0 ? ` (sisa ${entry.remainingKm} km).` : '.'}`}
+                        ? `Tersisa ${entry.remainingKm.toFixed(2)} km sebelum batas pakai.`
+                        : `${SHOE_STATUS_TEXT[entry.status]}${entry.remainingKm > 0 ? ` (sisa ${entry.remainingKm.toFixed(2)} km).` : '.'}`}
                     </p>
                   </div>
 
+                  {editingShoeId === entry.shoe.id && (
+                    <form
+                      onSubmit={(e) => handleSaveEditKm(e, entry.shoe.id, entry.shoe.name)}
+                      noValidate
+                      className="space-y-2 rounded-xl border border-white/10 bg-[#111216] p-2.5"
+                    >
+                      <Field
+                        label="Km Awal Sepatu"
+                        inputMode="decimal"
+                        value={editingShoeKm}
+                        onChange={(e) => { setEditingShoeKm(e.target.value); setShoeMsg(null); }}
+                        hint={entry.loggedKm > 0 ? `+ ${entry.loggedKm.toFixed(2)} km dari sesi lari tertaut` : 'Contoh: 2.19 atau 2,19'}
+                      />
+                      <div className="flex gap-2">
+                        <Button type="submit" variant="primary" block={false} className="min-h-9 px-3 py-1.5 text-xs">
+                          Simpan KM
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          block={false}
+                          onClick={() => { setEditingShoeId(null); setEditingShoeKm(''); }}
+                          className="min-h-9 px-3 py-1.5 text-xs"
+                        >
+                          Batal
+                        </Button>
+                      </div>
+                    </form>
+                  )}
+
                   <div className="flex flex-wrap gap-2 pt-0.5">
+                    <Button
+                      variant="secondary"
+                      block={false}
+                      onClick={() => handleOpenEditKm(entry.shoe.id, entry.shoe.initialKm)}
+                      className="min-h-9 px-3 py-1.5 text-xs"
+                    >
+                      Edit KM
+                    </Button>
                     {!entry.shoe.isDefault && (
                       <Button
                         variant="secondary"
