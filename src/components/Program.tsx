@@ -32,10 +32,10 @@ function Meter({ label, ratio }: { label: string; ratio: number }) {
   return (
     <div
       role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(r * 100)}
-      className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-navy-700"
+      className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-[#272A35]"
     >
       <div
-        className={`h-full rounded-full ${r >= 1 ? 'bg-emerald-400' : 'bg-coral'}`}
+        className={`h-full rounded-full ${r >= 1 ? 'bg-volt' : 'bg-sky-400'}`}
         style={{ width: `${r * 100}%` }}
       />
     </div>
@@ -82,10 +82,10 @@ export default function Program({ profile, workouts, onProfileChange }: { profil
 
       {tab === 'ringkasan' && (
         <div id="program-panel-ringkasan" role="tabpanel" aria-labelledby="program-tab-ringkasan" className="space-y-4">
-          <section aria-label="Hitung mundur lomba" className="sport-card p-4">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Menuju lomba {target}</div>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-5xl font-extrabold tabular-nums text-coral">{daysLeft == null ? '–' : Math.max(0, daysLeft)}</span>
+          <section aria-label="Hitung mundur lomba" className="rounded-3xl border border-white/[0.08] bg-gradient-to-br from-[#191B22] via-[#111216] to-[#0D1208] p-5">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Menuju lomba {target}</div>
+            <div className="mt-1 flex items-baseline gap-2.5">
+              <span className="font-mono text-5xl font-extrabold tabular-nums text-volt">{daysLeft == null ? '–' : Math.max(0, daysLeft)}</span>
               <span className="text-sm text-slate-300">
                 {daysLeft == null ? 'Isi tanggal lomba di bawah' : daysLeft < 0 ? 'Lomba sudah lewat' : `hari lagi · ${rem?.weeksRemaining} minggu`}
               </span>
@@ -108,22 +108,22 @@ export default function Program({ profile, workouts, onProfileChange }: { profil
           </div>
 
           {outlook && currentPace != null && (
-            <section className={`sport-card border-l-[3px] ${curriculum === 'maf' ? 'border-l-sky-400' : 'border-l-amber-400'} p-4 text-sm tabular-nums`}>
-              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Peluang memecahkan target (PB)</div>
-              <div className="mt-1 text-base font-bold text-coral">{outlook.label}</div>
-              <div className="mt-2 text-slate-300">
+            <section className={`sport-card border-l-[3px] ${curriculum === 'maf' ? 'border-l-sky-400' : 'border-l-volt'} p-4 text-sm`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Peluang memecahkan target (PB)</div>
+              <div className="mt-1 font-display text-base font-bold text-volt">{outlook.label}</div>
+              <div className="mt-2 tabular-nums text-slate-300">
                 Selisih waktu: {outlook.gapSec > 0 ? `+${Math.round(outlook.gapSec)} dtk (${fmtHms(outlook.gapSec)})` : `${Math.round(outlook.gapSec)} dtk, sudah di bawah target`}
               </div>
-              <div className="text-slate-300">Pace: {fmtPace(currentPace)} → {fmtPace(goalPace)} /km</div>
-              {outlook.perWeekSec != null && <div className="text-slate-300">Perlu sekitar {outlook.perWeekSec.toFixed(1)} dtk perbaikan per minggu</div>}
-              {curriculum === 'maf' && <p className="mt-2 text-xs text-slate-400">Mode MAF fokus membangun fondasi aerobik lebih dulu; proyeksi PB tetap dihitung dari performa terbaik terkini.</p>}
+              <div className="tabular-nums text-slate-300">Pace: {fmtPace(currentPace)} → {fmtPace(goalPace)} /km</div>
+              {outlook.perWeekSec != null && <div className="tabular-nums text-slate-300">Perlu sekitar {outlook.perWeekSec.toFixed(1)} dtk perbaikan per minggu</div>}
+              {curriculum === 'maf' && <p className="mt-2 text-xs text-slate-400">Mode MAF fokus membangun fondasi aerobik; proyeksi PB dihitung dari performa terbaik terkini.</p>}
             </section>
           )}
 
           <section className={card} aria-label="Rekomendasi pelatih">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Program latihan untuk kondisi Anda</div>
-            <div className="mt-1 text-base font-bold text-coral">
-              {mode === 'auto' ? 'Otomatis' : 'Pilihan Anda'}: {PLAN_LABEL[curriculum]}
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Metode latihan</div>
+            <div className="mt-1 font-display text-base font-bold text-volt">
+              {mode === 'auto' ? 'Otomatis' : 'Pilihanmu'}: {PLAN_LABEL[curriculum]}
             </div>
             {mode !== 'auto' && curriculum !== selection.plan && (
               <p className="mt-1 text-xs text-amber-400">Rekomendasi otomatis saat ini: {PLAN_LABEL[selection.plan]}.</p>
@@ -137,14 +137,14 @@ export default function Program({ profile, workouts, onProfileChange }: { profil
                     type="button"
                     aria-pressed={active}
                     onClick={() => chooseMode(opt.id)}
-                    className={`flex min-h-[56px] flex-col items-start justify-center rounded-xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
+                    className={`flex min-h-[56px] flex-col items-start justify-center rounded-2xl border px-3.5 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
                       active
-                        ? 'border-coral/70 bg-coral/15 text-orange-100'
-                        : 'border-navy-600 bg-navy-900/50 text-slate-200 hover:border-navy-500'
+                        ? 'border-volt/70 bg-volt/10 text-white'
+                        : 'border-white/10 bg-[#191B22] text-slate-200 hover:border-white/20'
                     }`}
                   >
-                    <span className="text-sm font-bold">{opt.label}</span>
-                    <span className={`mt-0.5 text-xs leading-snug ${active ? 'text-orange-200/90' : 'text-slate-400'}`}>
+                    <span className={`font-display text-sm font-bold ${active ? 'text-volt' : 'text-white'}`}>{opt.label}</span>
+                    <span className={`mt-0.5 text-xs leading-snug ${active ? 'text-slate-200' : 'text-slate-400'}`}>
                       {opt.desc}
                     </span>
                   </button>
@@ -190,11 +190,11 @@ export default function Program({ profile, workouts, onProfileChange }: { profil
               </div>
             )}
             {pen > 0 ? (
-              <div className="mt-4 rounded-xl border border-coral/60 bg-coral/10 p-3 text-sm text-coral">
+              <div className="mt-4 rounded-2xl border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
                 Daya tahan belum cukup: waktu prediksi ditambah {(pen * 100).toFixed(1)}% (sekitar +{penMin.toFixed(0)} menit). Volume atau long run masih di bawah syarat.
               </div>
             ) : rule ? (
-              <div className="mt-4 rounded-xl bg-emerald-400/10 p-3 text-sm text-emerald-300">Syarat volume dan long run terpenuhi.</div>
+              <div className="mt-4 rounded-2xl border border-volt/25 bg-volt/10 p-3 text-sm text-volt">Syarat volume dan long run terpenuhi.</div>
             ) : (
               <div className="mt-4 text-sm text-slate-400">Tidak ada tambahan waktu karena daya tahan untuk {target}.</div>
             )}

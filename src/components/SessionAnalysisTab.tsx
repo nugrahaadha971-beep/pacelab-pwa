@@ -64,12 +64,12 @@ function HrZoneBar({ range, avgHr, peakHr }: { range: [number, number]; avgHr: n
   const inZone = avgHr >= lo - 3 && avgHr <= hi;
 
   return (
-    <div className="mt-3 rounded-xl bg-navy-900 p-3 tabular-nums">
+    <div className="mt-3 rounded-2xl border border-white/[0.08] bg-[#191B22] p-3 tabular-nums">
       <div className="flex items-center justify-between text-xs">
         <span className="font-semibold text-slate-300">Posisi HR vs Zona Target</span>
-        <span className="font-bold text-emerald-400">{lo}–{hi} bpm</span>
+        <span className="font-bold text-volt">{lo}–{hi} bpm</span>
       </div>
-      <div className="relative mt-2.5 h-3 rounded-full bg-navy-700" role="img"
+      <div className="relative mt-2.5 h-3 rounded-full bg-white/10" role="img"
         aria-label={`HR rata-rata ${Math.round(avgHr)} bpm terhadap zona target ${lo} sampai ${hi} bpm`}>
         <div
           className="absolute inset-y-0 rounded-full bg-emerald-400/35 ring-1 ring-emerald-400/60"
@@ -119,12 +119,12 @@ function SessionCard({ item, defaultOpen }: { item: SessionAnalysis; defaultOpen
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-start justify-between gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral"
+        className="flex w-full items-start justify-between gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt"
       >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="font-display text-sm font-extrabold text-white">{fmtDate(w.date)}</span>
-            <span className="rounded-md bg-navy-700 px-1.5 py-0.5 text-[11px] font-bold uppercase text-slate-300">
+            <span className="rounded-lg bg-white/[0.06] px-1.5 py-0.5 text-[11px] font-bold uppercase text-slate-300">
               {TYPE_LABEL[w.workoutType]}
             </span>
             {item.matchedPlan && (
@@ -141,7 +141,7 @@ function SessionCard({ item, defaultOpen }: { item: SessionAnalysis; defaultOpen
             <StatusPill tone={STATUS_PILL_TONE[item.status]}>{item.verdictLabel}</StatusPill>
           </div>
         </div>
-        <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-navy-900 text-slate-400">
+            <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#191B22] text-slate-400">
           {open ? <ChevronUp size={18} aria-hidden /> : <ChevronDown size={18} aria-hidden />}
         </span>
       </button>
@@ -155,7 +155,7 @@ function SessionCard({ item, defaultOpen }: { item: SessionAnalysis; defaultOpen
             </div>
             <p className="mt-1 leading-relaxed text-slate-100">{item.summary}</p>
             <p className="mt-2 text-xs leading-relaxed text-slate-300">
-              <strong className="text-coral">Saran berikutnya:</strong> {item.nextAction}
+              <strong className="text-volt">Saran berikutnya:</strong> {item.nextAction}
             </p>
           </div>
 
@@ -216,7 +216,7 @@ function SessionCard({ item, defaultOpen }: { item: SessionAnalysis; defaultOpen
             <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rincian pemeriksaan sesi</h3>
             <ul className="mt-1.5 space-y-2">
               {item.checks.map((c, idx) => (
-                <li key={`${c.key}-${idx}`} className="flex items-start gap-2 rounded-xl bg-navy-900/70 p-2.5 text-xs">
+                <li key={`${c.key}-${idx}`} className="flex items-start gap-2 rounded-2xl border border-white/[0.06] bg-[#191B22]/80 p-2.5 text-xs">
                   <CheckIcon tone={c.tone} />
                   <div className="min-w-0">
                     <div className="font-bold text-slate-100">{c.title}</div>
@@ -233,22 +233,22 @@ function SessionCard({ item, defaultOpen }: { item: SessionAnalysis; defaultOpen
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                 Grafik detak jantung per km {item.targetHrRange ? `(area hijau = zona target ${item.targetHrRange[0]}–${item.targetHrRange[1]} bpm)` : ''}
               </h3>
-              <div className="mt-1.5 rounded-xl bg-navy-900 p-2">
+              <div className="mt-1.5 rounded-2xl border border-white/[0.06] bg-[#191B22] p-2">
                 <ResponsiveContainer width="100%" height={145}>
                   <LineChart data={lapChart}>
-                    <CartesianGrid stroke="#243456" vertical={false} />
+                    <CartesianGrid stroke="#232630" vertical={false} />
                     {item.targetHrRange && (
-                      <ReferenceArea y1={item.targetHrRange[0]} y2={item.targetHrRange[1]} fill="#34d399" fillOpacity={0.16} />
+                      <ReferenceArea y1={item.targetHrRange[0]} y2={item.targetHrRange[1]} fill="#C8FF00" fillOpacity={0.12} />
                     )}
                     <XAxis dataKey="km" stroke="#64748b" fontSize={11} tickLine={false} />
                     <YAxis domain={[minY, maxY]} stroke="#64748b" fontSize={11} tickLine={false} width={32} />
                     <Tooltip
-                      contentStyle={{ background: '#101829', border: '1px solid #243456', color: '#e2e8f0', fontSize: 12 }}
+                      contentStyle={{ background: '#111216', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '14px', color: '#e2e8f0', fontSize: 12 }}
                       formatter={(val, name) =>
                         name === 'hr' ? [`${val} bpm`, 'Detak jantung'] : [`${fmtPace(Number(val))} /km`, 'Pace']
                       }
                     />
-                    <Line dataKey="hr" stroke="#38bdf8" strokeWidth={2} dot={{ r: 3 }} />
+                    <Line dataKey="hr" stroke="#C8FF00" strokeWidth={2.2} dot={{ r: 3, fill: '#C8FF00' }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -280,7 +280,7 @@ export default function SessionAnalysisTab({ days, curriculum, items, summary }:
       <section className="sport-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-display text-sm font-bold text-slate-200">Kepatuhan sesi · {days} hari</h2>
-          <span className="rounded-full bg-coral/15 px-2.5 py-0.5 text-[11px] font-bold text-coral">
+          <span className="rounded-full bg-volt/15 px-2.5 py-0.5 text-[11px] font-bold text-volt">
             {PLAN_LABEL[curriculum]}
           </span>
         </div>
@@ -323,10 +323,10 @@ export default function SessionAnalysisTab({ days, curriculum, items, summary }:
               type="button"
               aria-pressed={filter === p.id}
               onClick={() => setFilter(p.id)}
-              className={`min-h-[38px] rounded-full border px-3 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
+              className={`min-h-[38px] rounded-full border px-3 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
                 filter === p.id
-                  ? 'border-coral/60 bg-coral/20 text-orange-200'
-                  : 'border-navy-700 bg-navy-900 text-slate-300'
+                  ? 'border-volt/50 bg-volt text-[#070709]'
+                  : 'border-white/10 bg-[#191B22] text-slate-300'
               }`}
             >
               {p.label} ({countOf(p.id)})
@@ -336,7 +336,7 @@ export default function SessionAnalysisTab({ days, curriculum, items, summary }:
       </section>
 
       {filtered.length === 0 ? (
-        <p className="rounded-xl bg-navy-800 p-5 text-center text-sm text-slate-400">
+        <p className="sport-card p-5 text-center text-sm text-slate-400">
           Tidak ada sesi pada kategori filter ini dalam {days} hari terakhir.
         </p>
       ) : (

@@ -18,25 +18,25 @@ const TYPE_LABEL: Record<WorkoutType, string> = { easy: 'Easy', tempo: 'Tempo', 
 const TYPE_IDS = Object.keys(TYPE_LABEL) as WorkoutType[];
 /** Warna per jenis sesi: garis di tepi kartu dan teks lencana. Ditulis lengkap agar terdeteksi Tailwind. */
 const TYPE_BORDER: Record<WorkoutType, string> = {
-  easy: 'border-l-sky-400', tempo: 'border-l-amber-400', interval: 'border-l-amber-400', long_run: 'border-l-indigo-400', race: 'border-l-coral',
+  easy: 'border-l-volt', tempo: 'border-l-coral', interval: 'border-l-coral', long_run: 'border-l-sky-400', race: 'border-l-coral',
 };
 const TYPE_BADGE: Record<WorkoutType, string> = {
-  easy: 'border-sky-400/30 bg-sky-400/15 text-sky-300',
-  tempo: 'border-amber-400/30 bg-amber-400/15 text-amber-300',
-  interval: 'border-amber-400/30 bg-amber-400/15 text-amber-300',
-  long_run: 'border-indigo-400/30 bg-indigo-400/15 text-indigo-300',
-  race: 'border-coral/30 bg-coral/15 text-coral',
+  easy: 'border-volt/30 bg-volt/15 text-volt',
+  tempo: 'border-coral/35 bg-coral/15 text-coral',
+  interval: 'border-coral/35 bg-coral/15 text-coral',
+  long_run: 'border-sky-400/30 bg-sky-400/15 text-sky-300',
+  race: 'border-coral/40 bg-coral/20 text-coral',
 };
 
 interface Filters { dist: DistFilter; source: SourceFilter; type: TypeFilter }
 const NO_FILTER: Filters = { dist: 'all', source: 'all', type: 'all' };
 
 const chip = (on: boolean) =>
-  `min-h-11 rounded-full border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
-    on ? 'border-coral/60 bg-coral/20 text-orange-200' : 'border-navy-700 bg-navy-800 text-slate-300'
+  `min-h-11 rounded-full border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
+    on ? 'border-volt/60 bg-volt/15 text-volt' : 'border-white/10 bg-[#191B22] text-slate-300'
   }`;
 const textarea =
-  'mt-1 block w-full rounded-xl border border-navy-700 bg-navy-900 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/40';
+  'mt-1 block w-full rounded-2xl border border-white/10 bg-[#191B22] px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-volt focus:outline-none focus:ring-2 focus:ring-volt/35';
 
 export default function Riwayat({ workouts, reload }: { workouts: Workout[]; reload: () => void }) {
   const [q, setQ] = useState('');
@@ -69,13 +69,13 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
           <span className="sr-only">Cari sesi atau catatan</span>
           <Search size={18} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={q} onChange={(e) => setQ(e.target.value)} type="search" placeholder="Cari sesi atau catatan"
-            className="block min-h-11 w-full rounded-xl border border-navy-700 bg-navy-800 py-2 pl-10 pr-3 text-slate-100 placeholder:text-slate-500 focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/40" />
+            className="block min-h-11 w-full rounded-2xl border border-white/10 bg-[#111216] py-2 pl-10 pr-3 text-slate-100 placeholder:text-slate-500 focus:border-volt focus:outline-none focus:ring-2 focus:ring-volt/35" />
         </label>
         <button type="button" onClick={() => setPanel(true)} aria-haspopup="dialog"
-          className="flex min-h-11 items-center gap-2 rounded-xl border border-navy-700 bg-navy-800 px-3 text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral">
+          className="flex min-h-11 items-center gap-2 rounded-2xl border border-white/10 bg-[#111216] px-3.5 text-sm font-bold text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt">
           <SlidersHorizontal size={18} aria-hidden />
           Filter
-          {active.length > 0 && <span className="rounded-full bg-coral px-1.5 text-xs text-navy-900">{active.length}</span>}
+          {active.length > 0 && <span className="rounded-full bg-volt px-1.5 text-xs font-extrabold text-[#070709]">{active.length}</span>}
         </button>
       </div>
 
@@ -83,7 +83,7 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
         <div className="flex flex-wrap items-center gap-2">
           {active.map((a) => (
             <button key={a.key} type="button" onClick={() => setF({ ...f, [a.key]: 'all' })} aria-label={`Hapus filter ${a.label}`}
-              className="flex min-h-11 items-center gap-1 rounded-full border border-coral/50 bg-coral/15 pl-3 pr-2 text-xs font-bold text-orange-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral">
+              className="flex min-h-11 items-center gap-1 rounded-full border border-volt/40 bg-volt/10 pl-3 pr-2 text-xs font-bold text-volt focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt">
               {a.label}<X size={14} aria-hidden />
             </button>
           ))}
@@ -92,11 +92,11 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
       )}
 
       {sorted.length === 0 && (
-        <p className="rounded-2xl bg-navy-800 p-4 text-sm text-slate-300">Belum ada sesi tercatat. Ketuk tombol <strong>+</strong> di pojok kanan bawah untuk mencatat sesi pertama.</p>
+        <p className="sport-card p-4 text-sm text-slate-300">Belum ada sesi tercatat. Ketuk tombol <strong className="text-volt">+</strong> di bawah buat catat sesi pertamamu.</p>
       )}
       {sorted.length > 0 && <p className="text-xs text-slate-400" aria-live="polite">{list.length} dari {sorted.length} sesi</p>}
       {sorted.length > 0 && list.length === 0 && (
-        <div className="space-y-3 rounded-2xl bg-navy-800 p-4 text-sm text-slate-300">
+        <div className="sport-card space-y-3 p-4 text-sm text-slate-300">
           <p>Tidak ada sesi yang cocok dengan pencarian atau filter ini.</p>
           <Button variant="secondary" onClick={() => { setQ(''); setF(NO_FILTER); }}>Hapus pencarian dan filter</Button>
         </div>
@@ -104,9 +104,9 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
 
       {list.map((w, i) => (
         <button key={w.id ?? i} type="button" onClick={() => setSel(w)}
-          className={`sport-card block w-full border-l-[3px] p-4 text-left tabular-nums transition hover:border-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${TYPE_BORDER[w.workoutType]}`}>
+          className={`sport-card block w-full border-l-[3px] p-4 text-left transition hover:border-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${TYPE_BORDER[w.workoutType]}`}>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-bold text-slate-100">{fmtDate(w.date)}</span>
+            <span className="font-display text-sm font-bold text-slate-100">{fmtDate(w.date)}</span>
             <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${TYPE_BADGE[w.workoutType]}`}>
               {TYPE_LABEL[w.workoutType]}
             </span>
@@ -114,26 +114,26 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
 
           <dl className="mt-3 grid grid-cols-3 gap-2">
             <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Jarak</dt>
-              <dd className="mt-0.5 font-display text-lg font-extrabold text-white">
-                {w.distanceKm.toFixed(2)} <span className="text-xs font-semibold text-slate-400">km</span>
+              <dt className="font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-400">Jarak</dt>
+              <dd className="mt-0.5 font-mono text-lg font-extrabold tabular-nums text-white">
+                {w.distanceKm.toFixed(2)} <span className="font-sans text-xs font-semibold text-slate-400">km</span>
               </dd>
             </div>
             <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Waktu</dt>
-              <dd className="mt-0.5 font-display text-lg font-extrabold text-white">{fmtHms(w.durationSec)}</dd>
+              <dt className="font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-400">Waktu</dt>
+              <dd className="mt-0.5 font-mono text-lg font-extrabold tabular-nums text-white">{fmtHms(w.durationSec)}</dd>
             </div>
             <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Pace rata-rata</dt>
-              <dd className="mt-0.5 font-display text-lg font-extrabold text-white">
-                {fmtPace(w.avgPaceSecPerKm)} <span className="text-xs font-semibold text-slate-400">/km</span>
+              <dt className="font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-400">Pace rata-rata</dt>
+              <dd className="mt-0.5 font-mono text-lg font-extrabold tabular-nums text-white">
+                {fmtPace(w.avgPaceSecPerKm)} <span className="font-sans text-xs font-semibold text-slate-400">/km</span>
               </dd>
             </div>
           </dl>
 
           {(w.avgHr != null || w.note) && (
             <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/[0.06] pt-2 text-xs text-slate-400">
-              {w.avgHr != null && <span className="shrink-0 font-medium text-slate-300">HR rata-rata: {w.avgHr} bpm</span>}
+              {w.avgHr != null && <span className="shrink-0 font-medium tabular-nums text-slate-300">HR rata-rata: {w.avgHr} bpm</span>}
               {w.note && <span className="min-w-0 flex-1 truncate">{w.note}</span>}
             </div>
           )}
@@ -239,14 +239,14 @@ function Detail({ w, onClose, onDelete, onSaved }: { w: Workout; onClose: () => 
       <label className="mt-3 block text-sm font-semibold text-slate-200">Catatan sesi
         <textarea value={note} onChange={(e) => { setNote(e.target.value); setSaved(false); }} rows={2} className={`${textarea} font-normal`} />
       </label>
-      {saved && <p role="status" className="mt-2 rounded-xl bg-emerald-400/15 px-3 py-2 text-sm font-semibold text-emerald-300">✓ Perubahan tersimpan.</p>}
+      {saved && <p role="status" className="mt-2 rounded-2xl border border-volt/25 bg-volt/10 px-3 py-2 text-sm font-semibold text-volt">✓ Perubahan tersimpan.</p>}
       <div className="mt-3"><Button onClick={save}>Simpan perubahan</Button></div>
       {w.laps.length > 0 && (
         <table className="mt-4 w-full text-sm tabular-nums">
           <thead className="text-left text-slate-400"><tr><th className="py-1">km</th><th>Pace</th><th>Detak jantung</th></tr></thead>
           <tbody>
             {w.laps.map((l) => (
-              <tr key={l.km} className="border-t border-navy-700">
+              <tr key={l.km} className="border-t border-white/[0.08]">
                 <td className="py-1">{l.km}</td><td>{fmtPace(l.paceSec)} /km</td><td>{l.avgHr ?? '–'}</td>
               </tr>
             ))}

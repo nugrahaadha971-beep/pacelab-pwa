@@ -22,7 +22,15 @@ import SessionAnalysisTab from './SessionAnalysisTab';
 
 const RANGES = [7, 28, 90] as const;
 type Range = (typeof RANGES)[number];
-const tip = { contentStyle: { background: '#101829', border: '1px solid #243456', color: '#e2e8f0', fontSize: 12 } };
+const tip = {
+  contentStyle: {
+    background: '#111216',
+    border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    color: '#f4f5f7',
+    fontSize: 12,
+  },
+};
 const axis = { stroke: '#64748b', fontSize: 11, tickLine: false };
 const short = (ts: number) => new Date(ts).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
 
@@ -48,9 +56,9 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
 }
 
 const CALLOUT_STYLE: Record<'good' | 'warn' | 'info', string> = {
-  good: 'border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-100',
-  warn: 'border-amber-400/30 bg-amber-400/[0.08] text-amber-100',
-  info: 'border-sky-400/25 bg-sky-400/[0.08] text-slate-200',
+  good: 'border-volt/25 bg-volt/[0.07] text-slate-100',
+  warn: 'border-coral/35 bg-coral/[0.08] text-orange-100',
+  info: 'border-white/10 bg-[#191B22] text-slate-200',
 };
 
 function ChartSummary({ tone = 'info', text }: { tone?: 'good' | 'warn' | 'info'; text: string }) {
@@ -244,11 +252,11 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
     <div className="space-y-4">
       <ScreenHeader title="Analitik" subtitle="Perkembangan kebugaran & beban latihan" />
 
-      <div role="group" aria-label="Rentang waktu" className="grid grid-cols-3 gap-1 rounded-2xl border border-white/[0.07] bg-navy-900 p-1">
+      <div role="group" aria-label="Rentang waktu" className="grid grid-cols-3 gap-1 rounded-full border border-white/[0.08] bg-[#111216] p-1">
         {RANGES.map((r) => (
           <button key={r} type="button" aria-pressed={days === r} onClick={() => setDays(r)}
-            className={`min-h-[44px] rounded-xl font-display text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
-              days === r ? 'bg-navy-700 text-white' : 'text-slate-400'
+            className={`min-h-[40px] rounded-full font-display text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
+              days === r ? 'bg-volt text-[#070709]' : 'text-slate-400 hover:text-slate-200'
             }`}>
             {r} Hari
           </button>
@@ -262,8 +270,8 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
       ) : (
         <>
       {!hasSessions ? (
-        <p className="rounded-xl bg-navy-800 p-6 text-center text-sm text-slate-400">
-          Belum ada sesi dalam {days} hari terakhir. Ketuk tombol + di pojok kanan bawah untuk mencatat sesi.
+        <p className="rounded-3xl border border-white/[0.08] bg-[#111216] p-6 text-center text-sm text-slate-400">
+          Belum ada sesi dalam {days} hari terakhir. Ketuk tombol <strong className="text-volt">+</strong> di bawah untuk mencatat sesi.
         </p>
       ) : (
         <>
@@ -274,14 +282,14 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
                 <span className="text-xs tabular-nums text-slate-400">{dec(latest.workout.distanceKm, 1)} km · {latest.targetZoneLabel}</span>
               </div>
               <p className="mt-2 text-sm text-slate-100">{latest.summary}</p>
-              <p className="mt-2 text-xs text-slate-300"><strong className="text-coral">Saran berikutnya:</strong> {latest.nextAction}</p>
+              <p className="mt-2 text-xs text-slate-300"><strong className="text-volt">Saran berikutnya:</strong> {latest.nextAction}</p>
               <p className="mt-2 text-xs text-slate-400">Rincian pemeriksaan semua sesi ada di tab Per Sesi.</p>
             </Card>
           )}
 
           {/* Kartu 1 — Ringkasan Perkembangan */}
           <Card title={`Ringkasan perkembangan · ${days} hari`}>
-            <div className={`sport-subcard border-l-4 p-3 text-sm font-medium text-slate-100 ${improving ? 'border-l-emerald-400' : 'border-l-sky-400'}`}>
+            <div className={`sport-subcard border p-3.5 text-sm font-medium text-slate-100 ${improving ? 'border-volt/30' : 'border-white/[0.08]'}`}>
               {progress.headline}
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3">
@@ -334,15 +342,15 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             <ChartSummary tone={acwrChartSummary.tone} text={acwrChartSummary.text} />
             <ResponsiveContainer width="100%" height={180}>
               <LineChart data={acwrData}>
-                <CartesianGrid stroke="#243456" vertical={false} />
-                <ReferenceArea y1={0.8} y2={1.3} fill="#34d399" fillOpacity={0.12} />
+                <CartesianGrid stroke="#272A35" vertical={false} />
+                <ReferenceArea y1={0.8} y2={1.3} fill="#C8FF00" fillOpacity={0.09} />
                 <XAxis dataKey="d" hide />
                 <YAxis domain={[0, acwrMax]} {...axis} width={28} />
                 <Tooltip {...tip} />
-                <Line dataKey="acwr" stroke="#ff6b5e" dot={false} connectNulls strokeWidth={2} />
+                <Line dataKey="acwr" stroke="#C8FF00" dot={false} connectNulls strokeWidth={2.5} />
               </LineChart>
             </ResponsiveContainer>
-            <p className="mt-1 text-xs text-slate-400">Area hijau (0,8–1,3) adalah rentang aman. Garis di dalam area itu berarti beban seimbang.</p>
+            <p className="mt-1 text-xs text-slate-400">Area Volt Lime (0,8–1,3) adalah rentang aman. Garis di dalam area itu berarti beban seimbang.</p>
           </div>
         )}
       </Card>
@@ -357,7 +365,7 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
               <>
                 <ResponsiveContainer width="100%" height={170}>
                   <LineChart data={trend}>
-                    <CartesianGrid stroke="#243456" vertical={false} />
+                    <CartesianGrid stroke="#272A35" vertical={false} />
                     <XAxis dataKey="d" {...axis} minTickGap={24} />
                     <YAxis {...axis} width={40} reversed domain={['auto', 'auto']} tickFormatter={(v: number) => fmtPace(v)} />
                     <Tooltip {...tip} formatter={(v) => [`${fmtPace(Number(v))} /km`, 'Pace santai']} />
@@ -375,11 +383,11 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
               <>
                 <ResponsiveContainer width="100%" height={170}>
                   <LineChart data={trend}>
-                    <CartesianGrid stroke="#243456" vertical={false} />
+                    <CartesianGrid stroke="#272A35" vertical={false} />
                     <XAxis dataKey="d" {...axis} minTickGap={24} />
                     <YAxis {...axis} width={32} domain={['auto', 'auto']} />
                     <Tooltip {...tip} formatter={(v) => [dec(Number(v)), 'Skor Kebugaran (VDOT)']} />
-                    <Line dataKey="vdot" stroke="#ff6b5e" dot={{ r: 3 }} connectNulls strokeWidth={2} />
+                    <Line dataKey="vdot" stroke="#C8FF00" dot={{ r: 3 }} connectNulls strokeWidth={2.5} />
                   </LineChart>
                 </ResponsiveContainer>
                 <p className="mt-1 text-xs text-slate-400">
@@ -398,11 +406,11 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             ) : (
               <ResponsiveContainer width="100%" height={180}>
                 <LineChart data={efData}>
-                  <CartesianGrid stroke="#243456" vertical={false} />
+                  <CartesianGrid stroke="#272A35" vertical={false} />
                   <XAxis dataKey="d" {...axis} minTickGap={24} />
                   <YAxis {...axis} width={36} domain={['auto', 'auto']} />
                   <Tooltip {...tip} />
-                  <Line dataKey="ef" stroke="#34d399" dot={{ r: 3 }} connectNulls strokeWidth={2} />
+                  <Line dataKey="ef" stroke="#C8FF00" dot={{ r: 3 }} connectNulls strokeWidth={2.5} />
                 </LineChart>
               </ResponsiveContainer>
             )}
@@ -412,11 +420,11 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             <ChartSummary tone={weeklyChartSummary.tone} text={weeklyChartSummary.text} />
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={weekly}>
-                <CartesianGrid stroke="#243456" vertical={false} />
+                <CartesianGrid stroke="#272A35" vertical={false} />
                 <XAxis dataKey="label" {...axis} />
                 <YAxis {...axis} width={28} />
                 <Tooltip {...tip} />
-                <Bar dataKey="km" fill="#ff6b5e" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="km" fill="#C8FF00" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Card>
@@ -425,16 +433,16 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
           <Card title={`Pencapaian · ${days} hari`}>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="sport-subcard p-2.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Lari terpanjang</div>
-                <div className="mt-1 font-display text-lg font-extrabold tabular-nums text-white">{dec(cur.longestKm)}<span className="ml-0.5 text-xs font-bold text-slate-400"> km</span></div>
+                <div className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400">Lari terpanjang</div>
+                <div className="mt-1 font-mono text-lg font-extrabold tabular-nums text-white">{dec(cur.longestKm)}<span className="ml-0.5 font-sans text-xs font-bold text-slate-400"> km</span></div>
               </div>
               <div className="sport-subcard p-2.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Pace tercepat</div>
-                <div className="mt-1 font-display text-lg font-extrabold tabular-nums text-white">{cur.bestPaceSec != null ? fmtPace(cur.bestPaceSec) : '–'}<span className="ml-0.5 text-xs font-bold text-slate-400"> /km</span></div>
+                <div className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400">Pace tercepat</div>
+                <div className="mt-1 font-mono text-lg font-extrabold tabular-nums text-white">{cur.bestPaceSec != null ? fmtPace(cur.bestPaceSec) : '–'}<span className="ml-0.5 font-sans text-xs font-bold text-slate-400"> /km</span></div>
               </div>
               <div className="sport-subcard p-2.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Frekuensi</div>
-                <div className="mt-1 font-display text-lg font-extrabold tabular-nums text-white">{dec(cur.sessionsPerWeek)}<span className="ml-0.5 text-xs font-bold text-slate-400"> sesi/mgg</span></div>
+                <div className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400">Frekuensi</div>
+                <div className="mt-1 font-mono text-lg font-extrabold tabular-nums text-white">{dec(cur.sessionsPerWeek)}<span className="ml-0.5 font-sans text-xs font-bold text-slate-400"> sesi/mgg</span></div>
               </div>
             </div>
           </Card>

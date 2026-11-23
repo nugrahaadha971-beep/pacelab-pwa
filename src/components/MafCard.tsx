@@ -92,7 +92,7 @@ export default function MafCard({ age, adj, onAdj, maf, points, maxHr, targetDis
       </div>
 
       {outlook && (
-        <div role="group" className="mt-4 rounded-xl bg-navy-900 p-3" aria-labelledby="maf-proyeksi-judul">
+        <div role="group" className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191B22] p-3.5" aria-labelledby="maf-proyeksi-judul">
           <h4 id="maf-proyeksi-judul" className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Proyeksi Lomba &amp; Lini Masa MAF</h4>
 
           <div className="mt-2">
@@ -143,7 +143,7 @@ export default function MafCard({ age, adj, onAdj, maf, points, maxHr, targetDis
         </div>
       )}
 
-      <details className="mt-3 rounded-xl bg-navy-900">
+      <details className="mt-3 rounded-2xl border border-white/[0.08] bg-[#191B22]/70">
         <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-semibold text-slate-300">Apa itu metode MAF?</summary>
         <div className="space-y-2 px-3 pb-3 text-sm text-slate-300">
           <p><strong>MAF</strong> (Maximum Aerobic Function, metode Phil Maffetone): membangun mesin aerobik dengan berlatih di bawah batas detak jantung tertentu, yaitu 180 dikurangi usia (165 untuk usia 16 ke bawah), disesuaikan dengan kondisi Anda.</p>

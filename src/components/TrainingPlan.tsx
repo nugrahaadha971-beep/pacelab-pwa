@@ -42,8 +42,8 @@ const PHASE_LABEL: Record<Phase, string> = { base: 'Base Building', build: 'Buil
 const STORE_KEY = 'pacelab.k5';
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Sen … Min
 const card = 'sport-card p-4';
-const control = 'mt-1 block min-h-11 w-full rounded-xl border border-navy-700 bg-navy-900 px-3 py-2 text-sm tabular-nums text-slate-100 focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/40';
-const badge = 'inline-block rounded-full bg-coral/15 px-2 py-0.5 text-[11px] font-semibold text-coral';
+const control = 'mt-1 block min-h-11 w-full rounded-2xl border border-white/10 bg-[#111216] px-3 py-2 text-sm tabular-nums text-slate-100 focus:border-volt focus:outline-none focus:ring-2 focus:ring-volt/35';
+const badge = 'inline-block rounded-full bg-coral/15 px-2.5 py-0.5 text-[11px] font-semibold text-coral';
 
 function loadSaved(): string | null {
   try { return localStorage.getItem(STORE_KEY); } catch { return null; }
@@ -96,8 +96,8 @@ function SettingsSheet({ st, update, k5Text, onK5, k5, paceChartRow, fromPredict
               const on = st.days.includes(d);
               return (
                 <button key={d} type="button" aria-pressed={on} onClick={() => update(toggleDay(st, d))}
-                  className={`min-h-11 rounded-xl text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
-                    on ? 'bg-coral text-navy-950' : 'border border-navy-600 text-slate-300'
+                  className={`min-h-11 rounded-xl text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
+                    on ? 'bg-volt text-[#070709]' : 'border border-white/10 bg-[#191B22] text-slate-300'
                   }`}>
                   {WEEKDAY_SHORT[d]}
                 </button>
@@ -335,14 +335,14 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
               block={false}
               onClick={handleGenerateAiPlan}
               disabled={!canGenerateAi}
-              className="gap-2 border-sky-400/30 bg-sky-400/10 text-sky-200 hover:bg-sky-400/15"
+              className="gap-2 border-volt/35 bg-volt/10 text-volt hover:bg-volt/15"
             >
-              <Sparkles className="h-4 w-4 text-sky-300" aria-hidden />
+              <Sparkles className="h-4 w-4 text-volt" aria-hidden />
               <span>{aiLoading ? 'Menyusun jadwal AI…' : 'Susun Jadwal dengan AI'}</span>
             </Button>
 
             {hasAiActive && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/15 px-2.5 py-1 text-xs font-bold text-emerald-300">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-volt/30 bg-volt/15 px-2.5 py-1 text-xs font-bold text-volt">
                 <Sparkles className="h-3.5 w-3.5" aria-hidden />
                 <span>Program Aktif: Gemini AI</span>
               </span>
@@ -351,12 +351,12 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
 
           {!hasApiKey && (
             <p className="text-xs text-slate-400">
-              Tambahkan Gemini API Key di tab Profil untuk mengaktifkan penyusunan jadwal AI.
+              Tambahkan Gemini API Key di Profil untuk mengaktifkan penyusunan jadwal AI.
             </p>
           )}
           {hasApiKey && !isOnline && (
             <p className="text-xs text-slate-400">
-              Perangkat sedang offline. Hubungkan ke internet untuk menyusun jadwal dengan AI.
+              Sedang offline. Hubungkan internet untuk menyusun jadwal AI.
             </p>
           )}
 
@@ -371,7 +371,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
           )}
 
           {aiError && (
-            <p role="alert" className="rounded-xl bg-coral/15 px-3 py-2 text-xs leading-relaxed text-coral">
+            <p role="alert" className="rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-xs leading-relaxed text-coral">
               {aiError}
             </p>
           )}
@@ -383,7 +383,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
           maxHr={maxHr} targetDistance={profile.targetDistance} weeksRemaining={plan.weeksRemaining} />
       )}
 
-      <section className="rounded-2xl border border-coral/40 bg-coral/5 p-4 text-sm" aria-labelledby="adaptasi-judul">
+      <section className="rounded-3xl border border-white/[0.08] bg-[#111216] p-4 text-sm" aria-labelledby="adaptasi-judul">
         <h3 id="adaptasi-judul" className="font-semibold">Penyesuaian terbaru dari sesi terakhir</h3>
         {calib && (
           <p className="mt-1 text-slate-200">
@@ -421,15 +421,15 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
       <section className="space-y-3" aria-label="Sesi minggu ini">
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => setWeekIdx(wi - 1)} disabled={wi <= 0} aria-label="Minggu sebelumnya"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-navy-700 text-slate-200 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral">
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-[#111216] text-slate-200 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt">
             <ChevronLeft size={20} aria-hidden />
           </button>
           <select value={wi} onChange={(e) => setWeekIdx(Number(e.target.value))} aria-label="Pilih minggu"
-            className="min-h-11 min-w-0 flex-1 rounded-xl border border-navy-700 bg-navy-900 px-3 text-sm text-slate-100 focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/40">
+            className="min-h-11 min-w-0 flex-1 rounded-2xl border border-white/10 bg-[#111216] px-3 text-sm text-slate-100 focus:border-volt focus:outline-none focus:ring-2 focus:ring-volt/35">
             {plan.weeks.map((w, i) => <option key={w.weekNo} value={i}>{weekLabel(w)}</option>)}
           </select>
           <button type="button" onClick={() => setWeekIdx(wi + 1)} disabled={wi >= plan.weeks.length - 1} aria-label="Minggu berikutnya"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-navy-700 text-slate-200 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral">
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-[#111216] text-slate-200 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt">
             <ChevronRight size={20} aria-hidden />
           </button>
         </div>
@@ -453,7 +453,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
           const auto = autoCompleted(s, workoutDays, todayIso);
           const gp = goalPaceFor(s);
           const status = isDone ? 'Selesai' : dayNum(s.date) < dayNum(todayIso) ? 'Terlewat' : s.date === todayIso ? 'Hari ini' : 'Mendatang';
-          const statusColor = isDone ? 'text-emerald-400' : status === 'Terlewat' ? 'text-amber-400' : status === 'Hari ini' ? 'text-coral' : 'text-slate-400';
+          const statusColor = isDone ? 'text-volt' : status === 'Terlewat' ? 'text-amber-400' : status === 'Hari ini' ? 'text-volt' : 'text-slate-400';
           const delta = s.paceDeltaSec ?? 0;
           const easy = s.kind === 'recovery' || s.kind === 'long';
           const calibPace = calib && test3k && s.zone === 'interval' && s.weekNo > test3k.weekNo ? intervalPaceRange(calib.pace3kSecPerKm, s.repKm) : null;
@@ -490,28 +490,28 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
                   <span className="text-sm font-semibold">{status}{auto ? ' (otomatis)' : ''}</span>
                   <button type="button" role="checkbox" aria-checked={isDone} disabled={auto} onClick={() => update(toggleDone(st, s.id))}
                     aria-label={`Tandai selesai: ${KIND_LABEL[s.kind]}`}
-                    className={`flex h-11 w-11 items-center justify-center rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:opacity-60 ${
-                      isDone ? 'border-emerald-400 bg-emerald-400 text-navy-950' : 'border-navy-600 text-transparent'
+                    className={`flex h-11 w-11 items-center justify-center rounded-2xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt disabled:opacity-60 ${
+                      isDone ? 'border-volt bg-volt text-[#070709]' : 'border-white/15 bg-[#191B22] text-transparent'
                     }`}>
                     <Check size={22} strokeWidth={3} aria-hidden />
                   </button>
                 </div>
               </div>
 
-              <h3 className="mt-1 font-display text-lg font-extrabold text-white">{sessionTitle}</h3>
+              <h3 className="mt-1 font-display text-lg font-bold text-white">{sessionTitle}</h3>
 
-              <dl className="mt-3 grid grid-cols-2 gap-2.5 tabular-nums">
+              <dl className="mt-3 grid grid-cols-2 gap-2.5">
                 <div className="sport-subcard p-3">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Jarak / Durasi</dt>
-                  <dd className="mt-1 font-display text-lg font-extrabold text-white">{loadPrimary}</dd>
-                  {loadSub && <div className="mt-0.5 text-xs text-slate-400">{loadSub}</div>}
+                  <dt className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400">Jarak / Durasi</dt>
+                  <dd className="mt-1 font-mono text-lg font-extrabold tabular-nums text-white">{loadPrimary}</dd>
+                  {loadSub && <div className="mt-0.5 font-sans text-xs text-slate-400">{loadSub}</div>}
                 </div>
                 <div className="sport-subcard p-3">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Target Detak Jantung</dt>
-                  <dd className={`mt-1 font-display text-lg font-extrabold ${s.hr ? 'text-emerald-400' : 'text-slate-300'}`}>
+                  <dt className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400">Target Detak Jantung</dt>
+                  <dd className={`mt-1 font-mono text-lg font-extrabold tabular-nums ${s.hr ? 'text-volt' : 'text-slate-300'}`}>
                     {s.hr ? `${s.hr[0]}–${s.hr[1]} bpm` : 'Isi di Profil'}
                   </dd>
-                  <div className="mt-0.5 text-xs text-slate-400">
+                  <div className="mt-0.5 font-sans text-xs text-slate-400">
                     {s.hr
                       ? (s.zone === 'maf' ? 'Zona MAF' : s.zone === 'interval' || s.zone === 'test' ? 'Di akhir ulangan' : 'Jadikan patokan')
                       : (s.zone === 'maf' ? 'Lengkapi usia' : 'Lengkapi HR maks')}
@@ -519,7 +519,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
                 </div>
               </dl>
 
-              <details className="group mt-3 rounded-xl border border-white/[0.06] bg-navy-900/70">
+              <details className="group mt-3 rounded-2xl border border-white/[0.08] bg-[#191B22]/70">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-sm font-semibold text-slate-300">
                   <span>Detail &amp; atur sesi</span>
                   <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
@@ -641,7 +641,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
           onClose={() => setAiPreview(null)}
         >
           <div className="space-y-4">
-            <p className="rounded-xl border border-sky-400/25 bg-sky-400/10 px-3.5 py-2.5 text-sm leading-relaxed text-slate-200">
+            <p className="rounded-2xl border border-volt/25 bg-volt/[0.08] px-3.5 py-2.5 text-sm leading-relaxed text-slate-200">
               {aiPreview.summary}
             </p>
             <ul className="space-y-2.5">
@@ -649,7 +649,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
                 <li key={s.id} className={`sport-subcard border-l-[3px] ${KIND_BORDER[s.kind]} p-3 text-xs`}>
                   <div className="flex flex-wrap items-center justify-between gap-1">
                     <span className="font-semibold text-slate-100">{formatDateId(s.date)}</span>
-                    <span className="font-bold text-sky-300">{KIND_LABEL[s.kind]}</span>
+                    <span className="font-bold text-volt">{KIND_LABEL[s.kind]}</span>
                   </div>
                   <div className="mt-0.5 text-sm font-bold text-slate-100">{s.name}</div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums text-slate-300">

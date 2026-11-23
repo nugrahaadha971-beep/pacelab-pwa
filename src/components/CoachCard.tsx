@@ -32,12 +32,12 @@ const STATUS_BADGE: Record<AcwrStatus, { label: string; badge: string; pin: stri
   },
   sweet_spot: {
     label: 'Aman',
-    badge: 'bg-emerald-400/15 text-emerald-300 border-emerald-400/30',
-    pin: 'bg-emerald-400 ring-emerald-400/35',
+    badge: 'bg-volt/15 text-volt border-volt/30',
+    pin: 'bg-volt ring-volt/35',
   },
   high_fatigue: {
     label: 'Terlalu Berat',
-    badge: 'bg-coral/15 text-coral border-coral/30',
+    badge: 'bg-coral/15 text-coral border-coral/35',
     pin: 'bg-coral ring-coral/35',
   },
 };
@@ -67,9 +67,9 @@ const PACE_ZONES: ReadonlyArray<{
     name: 'Marathon',
     desc: 'Ritme stabil & efisien jangka panjang',
     barPct: '58%',
-    barColor: 'bg-emerald-400',
-    textColor: 'text-emerald-300',
-    dotColor: 'bg-emerald-400',
+    barColor: 'bg-volt',
+    textColor: 'text-volt',
+    dotColor: 'bg-volt',
     hrFrac: [0.80, 0.87],
   },
   {
@@ -118,8 +118,8 @@ export function ZonaPaceCard({ vdot, maxHr }: { vdot: number; maxHr: number | nu
           <h2 className="text-base font-bold tracking-tight text-slate-100">Zona Pace</h2>
           <p className="text-xs text-slate-400">Target kecepatan latihan berdasarkan Skor Kebugaran Lari</p>
         </div>
-        <span className="shrink-0 rounded-full border border-sky-400/30 bg-sky-400/15 px-3 py-1 text-xs font-extrabold tabular-nums text-sky-300">
-          Skor {vdot.toFixed(1)} <span className="font-semibold text-sky-300/75">(VDOT)</span>
+        <span className="shrink-0 rounded-full border border-volt/30 bg-volt/15 px-3 py-1 text-xs font-extrabold tabular-nums text-volt">
+          Skor {vdot.toFixed(1)} <span className="font-semibold text-volt/75">(VDOT)</span>
         </span>
       </div>
 
@@ -151,7 +151,7 @@ export function ZonaPaceCard({ vdot, maxHr }: { vdot: number; maxHr: number | nu
                 </div>
               </div>
 
-              <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-navy-700">
+              <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-[#272A35]">
                 <div
                   className={`h-full rounded-full ${z.barColor} transition-all duration-300`}
                   style={{ width: z.barPct }}
@@ -288,12 +288,12 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
     <section aria-label="Kondisi Tubuh dan Pelatih" className="sport-card p-4">
       {/* Header & Badge Kondisi Beban Tubuh */}
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-coral/15 text-coral">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-volt/15 text-volt">
             <Activity className="h-4 w-4" aria-hidden />
           </span>
           <div>
-            <h2 className="font-display text-base font-bold tracking-tight text-slate-100">Kondisi Tubuh &amp; Pelatih</h2>
+            <h2 className="font-display text-base font-bold tracking-tight text-white">Kondisi Tubuh &amp; Pelatih</h2>
             <p className="text-[11px] text-slate-400">Kondisi Beban Tubuh</p>
           </div>
         </div>
@@ -315,33 +315,33 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
           variant="secondary"
           onClick={() => void handleAnalyzeAi(false)}
           disabled={!canAnalyzeAi}
-          className="gap-2 border-sky-400/30 bg-sky-400/10 text-sky-200 hover:bg-sky-400/15"
+          className="gap-2 border-volt/35 bg-volt/10 text-volt hover:bg-volt/15"
         >
-          <Sparkles className="h-4 w-4 text-sky-300" aria-hidden />
+          <Sparkles className="h-4 w-4 text-volt" aria-hidden />
           <span>{aiLoading ? 'Meminta saran Pelatih AI…' : 'Tanya Pelatih AI'}</span>
         </Button>
 
         {!hasApiKey && (
           <p className="mt-2 text-xs text-slate-400">
-            Tambahkan Gemini API Key di tab Profil untuk mengaktifkan Pelatih AI.
+            Tambahkan Gemini API Key di Profil untuk mengaktifkan Pelatih AI.
           </p>
         )}
         {hasApiKey && !isOnline && (
           <p className="mt-2 text-xs text-slate-400">
-            Perangkat sedang offline. Hubungkan ke internet untuk memakai Pelatih AI.
+            Sedang offline. Hubungkan internet untuk tanya Pelatih AI.
           </p>
         )}
 
         {aiError && (
-          <p role="alert" className="mt-2.5 rounded-xl bg-coral/15 px-3 py-2 text-xs leading-relaxed text-coral">
+          <p role="alert" className="mt-2.5 rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-xs leading-relaxed text-coral">
             {aiError}
           </p>
         )}
 
         {aiResult && (
-          <div className="mt-3 sport-subcard p-3" aria-live="polite">
+          <div className="mt-3 sport-subcard p-3.5" aria-live="polite">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-sky-300">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-volt">
                 <Sparkles className="h-3.5 w-3.5" aria-hidden />
                 <span>Saran Pelatih AI</span>
               </div>
@@ -349,7 +349,7 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
                 type="button"
                 onClick={() => void handleAnalyzeAi(true)}
                 disabled={!canAnalyzeAi}
-                className="inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2 text-[11px] font-semibold text-sky-300 hover:bg-sky-400/10 disabled:opacity-50"
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2 text-[11px] font-semibold text-volt hover:bg-volt/10 disabled:opacity-50"
               >
                 <RefreshCw className={`h-3 w-3 ${aiLoading ? 'animate-spin' : ''}`} aria-hidden />
                 <span>Perbarui Analisis</span>
@@ -359,7 +359,7 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
               <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-200">
                 {aiPoints.map((point, idx) => (
                   <li key={idx} className="flex gap-2">
-                    <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+                    <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-volt" />
                     <span>{point}</span>
                   </li>
                 ))}
@@ -372,7 +372,7 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
       </div>
 
       {/* Detail Rasio Beban (ACWR) & Efisiensi Jantung (EF) terlipat */}
-      <details className="group mt-3.5 rounded-xl border border-white/[0.06] bg-navy-900/60">
+      <details className="group mt-3.5 rounded-2xl border border-white/[0.08] bg-[#191B22]/70">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-semibold text-slate-300">
           <span>Lihat detail rasio beban</span>
           <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
@@ -387,17 +387,17 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
               </div>
 
               <div className="relative py-1.5">
-                <div className="flex h-2 w-full overflow-hidden rounded-full bg-navy-700">
+                <div className="flex h-2 w-full overflow-hidden rounded-full bg-[#272A35]">
                   <div className="h-full bg-sky-400/75" style={{ width: '44.44%' }} />
-                  <div className="h-full bg-emerald-400" style={{ width: '27.78%' }} />
-                  <div className="h-full bg-coral/85" style={{ width: '27.78%' }} />
+                  <div className="h-full bg-volt" style={{ width: '27.78%' }} />
+                  <div className="h-full bg-coral/90" style={{ width: '27.78%' }} />
                 </div>
 
                 <div
                   className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
                   style={{ left: `${acwrMarkerPct(load.ratio)}%` }}
                 >
-                  <span className={`block h-3.5 w-3.5 rounded-full border-2 border-navy-900 ring-4 ${meta.pin}`} />
+                  <span className={`block h-3.5 w-3.5 rounded-full border-2 border-[#070709] ring-4 ${meta.pin}`} />
                 </div>
               </div>
 
@@ -409,7 +409,7 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
               </div>
               <div className="mt-1 flex justify-between text-[10px] font-medium text-slate-400">
                 <span className="text-sky-300">Ringan</span>
-                <span className="text-emerald-300">Aman</span>
+                <span className="text-volt">Aman</span>
                 <span className="text-coral">Terlalu Berat</span>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-slate-400">
@@ -426,7 +426,7 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
             <div className="space-y-1 border-t border-white/[0.06] pt-2 text-xs text-slate-300">
               {ef.improving && (
                 <div>
-                  Efisiensi Jantung <span className="text-slate-400">(EF)</span>: <strong className="text-emerald-300">Meningkat</strong>
+                  Efisiensi Jantung <span className="text-slate-400">(EF)</span>: <strong className="text-volt">Meningkat</strong>
                 </div>
               )}
               {drift != null && (

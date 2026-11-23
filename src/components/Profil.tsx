@@ -17,14 +17,14 @@ interface Errs { age?: string; restingHr?: string; maxHr?: string; targetTime?: 
 
 function Notice({ msg }: { msg: Msg }) {
   return msg.ok ? (
-    <p role="status" className="rounded-xl bg-emerald-400/15 px-3 py-2 text-sm font-semibold text-emerald-300">✓ {msg.text}</p>
+    <p role="status" className="rounded-2xl border border-volt/25 bg-volt/10 px-3 py-2 text-sm font-semibold text-volt">✓ {msg.text}</p>
   ) : (
-    <p role="alert" className="rounded-xl bg-coral/15 px-3 py-2 text-sm text-coral">{msg.text}</p>
+    <p role="alert" className="rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">{msg.text}</p>
   );
 }
 
 const SHOE_BAR_STYLE: Record<ShoeStatus, { bar: string; pill: string; badgeText: string }> = {
-  good: { bar: 'bg-emerald-400', pill: 'good', badgeText: 'Masih nyaman' },
+  good: { bar: 'bg-volt', pill: 'good', badgeText: 'Masih nyaman' },
   warn: { bar: 'bg-amber-400', pill: 'warn', badgeText: 'Hampir habis' },
   replace: { bar: 'bg-coral', pill: 'bad', badgeText: 'Perlu ganti' },
 };
@@ -202,7 +202,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
         <Field label="Detak jantung istirahat" term="Resting HR, bpm" hint="Ukur saat bangun tidur sebelum beranjak dari kasur." name="restingHr" type="number" inputMode="numeric"
           defaultValue={profile?.restingHr} error={errs.restingHr} />
         <label className="flex min-h-11 items-center gap-3 text-sm font-semibold text-slate-200">
-          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="h-5 w-5 accent-coral" />
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="h-5 w-5 accent-volt" />
           Hitung detak jantung maksimal otomatis (rumus Tanaka)
         </label>
         <Field label="Detak jantung maksimal" term="Max HR, bpm" type="number" inputMode="numeric" disabled={auto}
@@ -269,7 +269,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.min(100, Math.round(shoeMileage.pct))}
-            className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-navy-700"
+            className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-[#272A35]"
           >
             <div
               className={`h-full rounded-full transition-all duration-300 ${shoeStyle.bar}`}
@@ -331,7 +331,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
               Cadangan berisi seluruh sesi lari, jadwal, dan profil. Karena semua data tersimpan lokal di browser ini, buat cadangan secara berkala.
             </p>
             <Button variant="secondary" onClick={exportJson}>Ekspor cadangan (.json)</Button>
-            <label className="flex min-h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-navy-700 px-4 py-2 text-sm font-semibold text-slate-300 focus-within:ring-2 focus-within:ring-coral">
+            <label className="flex min-h-11 w-full cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 px-4 py-2 text-sm font-semibold text-slate-300 focus-within:ring-2 focus-within:ring-volt">
               Pulihkan dari cadangan (.json)
               <input type="file" accept=".json" onChange={pickImport} className="sr-only" />
             </label>

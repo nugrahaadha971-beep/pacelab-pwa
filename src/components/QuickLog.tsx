@@ -25,15 +25,15 @@ interface Msg { text: string; ok: boolean }
 interface Errs { date?: string; duration?: string; distance?: string; rpe?: string }
 
 const chip = (on: boolean) =>
-  `flex min-h-11 flex-col items-start justify-center rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
-    on ? 'border-coral/70 bg-coral/15 text-orange-100' : 'border-navy-700 bg-navy-800 text-slate-200'
+  `flex min-h-11 flex-col items-start justify-center rounded-2xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
+    on ? 'border-volt/70 bg-volt/10 text-white' : 'border-white/10 bg-[#191B22] text-slate-200 hover:border-white/20'
   }`;
 
 function rpeFeedback(v: number): { title: string; tone: string } {
   if (v <= 3) return { title: '1–3: Sangat ringan', tone: 'border-sky-400/30 bg-sky-400/10 text-sky-300' };
-  if (v <= 6) return { title: '4–6: Sedang & nyaman', tone: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300' };
+  if (v <= 6) return { title: '4–6: Sedang & nyaman', tone: 'border-volt/30 bg-volt/10 text-volt' };
   if (v <= 8) return { title: '7–8: Berat', tone: 'border-amber-400/30 bg-amber-400/10 text-amber-300' };
-  return { title: '9–10: Maksimal', tone: 'border-coral/30 bg-coral/10 text-coral' };
+  return { title: '9–10: Maksimal', tone: 'border-coral/35 bg-coral/10 text-coral' };
 }
 
 /** Pilihan jenis sesi dengan sub-label ramah pemula (satu pilihan). */
@@ -53,8 +53,8 @@ function TypePicker({ value, onChange }: { value: WorkoutType; onChange: (t: Wor
               onClick={() => onChange(t.id)}
               className={`${chip(on)} ${idx === TYPES.length - 1 ? 'col-span-2' : ''}`}
             >
-              <span className="text-sm font-bold">{t.label}</span>
-              <span className={`text-[11px] leading-snug ${on ? 'text-orange-200/85' : 'text-slate-400'}`}>{t.desc}</span>
+              <span className={`font-display text-sm font-bold ${on ? 'text-volt' : 'text-white'}`}>{t.label}</span>
+              <span className={`text-[11px] leading-snug ${on ? 'text-slate-200' : 'text-slate-400'}`}>{t.desc}</span>
             </button>
           );
         })}
@@ -89,8 +89,8 @@ function RpeScale({ value, onChange, error, hint, warn }: { value: number | null
           const on = value === n;
           return (
             <button key={n} type="button" role="radio" aria-checked={on} onClick={() => onChange(on ? null : n)}
-              className={`min-h-11 rounded-xl border text-base font-bold tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
-                on ? 'border-transparent bg-coral text-navy-950' : 'border-navy-700 bg-navy-800 text-slate-300'
+              className={`min-h-11 rounded-2xl border font-mono text-base font-bold tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
+                on ? 'border-transparent bg-volt text-[#070709]' : 'border-white/10 bg-[#191B22] text-slate-300'
               }`}>
               {n}
             </button>
@@ -98,7 +98,7 @@ function RpeScale({ value, onChange, error, hint, warn }: { value: number | null
         })}
       </div>
       {feedback ? (
-        <div className={`mt-2 rounded-xl border px-3 py-2 text-xs font-semibold ${feedback.tone}`} aria-live="polite">
+        <div className={`mt-2 rounded-2xl border px-3 py-2 text-xs font-semibold ${feedback.tone}`} aria-live="polite">
           Tingkat kelelahan: {feedback.title}
         </div>
       ) : (
@@ -114,9 +114,9 @@ function RpeScale({ value, onChange, error, hint, warn }: { value: number | null
 
 function Notice({ msg }: { msg: Msg }) {
   return msg.ok ? (
-    <p role="status" className="rounded-xl bg-emerald-400/15 px-3 py-2 text-sm font-semibold text-emerald-300">✓ {msg.text}</p>
+    <p role="status" className="rounded-2xl border border-volt/25 bg-volt/10 px-3 py-2 text-sm font-semibold text-volt">✓ {msg.text}</p>
   ) : (
-    <p role="alert" className="rounded-xl bg-coral/15 px-3 py-2 text-sm text-coral">{msg.text}</p>
+    <p role="alert" className="rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">{msg.text}</p>
   );
 }
 
@@ -225,7 +225,7 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
           <TypePicker value={impType} onChange={setImpType} />
           <RpeScale value={impRpe} onChange={(v) => { setImpRpe(v); if (v != null) setImpWarn(false); }} hint="Wajib diisi bila file tidak punya data detak jantung."
             warn={impWarn ? 'File ini tidak punya data detak jantung. Pilih RPE di sini, lalu pilih berkas lagi.' : undefined} />
-          <label className="flex min-h-[46px] w-full cursor-pointer items-center justify-center rounded-xl bg-coral px-4 py-2 font-display text-sm font-extrabold text-navy-950 shadow-lg shadow-coral/25 focus-within:ring-2 focus-within:ring-coral focus-within:ring-offset-2 focus-within:ring-offset-navy-900">
+          <label className="flex min-h-[48px] w-full cursor-pointer items-center justify-center rounded-2xl bg-volt px-4 py-2 font-display text-sm font-extrabold text-[#070709] shadow-[0_0_20px_rgba(200,255,0,0.25)] focus-within:ring-2 focus-within:ring-volt focus-within:ring-offset-2 focus-within:ring-offset-[#070709]">
             Pilih berkas .FIT / .GPX
             <input type="file" accept=".fit,.gpx" onChange={onImport} className="sr-only" />
           </label>
