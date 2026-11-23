@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { clearAll, db, exportBackup, importBackup } from '../db/database';
 import { tanakaMaxHr } from '../analytics/workload';
 import { clearGeminiApiKey, loadGeminiApiKey, saveGeminiApiKey } from '../analytics/aiCoach';
@@ -66,7 +67,7 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
       setFormMsg({ text: err instanceof Error ? err.message : 'Gagal menyimpan profil.', ok: false });
       return;
     }
-    setFormMsg({ text: 'Profil tersimpan. Zona dan prediksi diperbarui.', ok: true });
+    setFormMsg({ text: 'Profil tersimpan. Zona latihan dan target diperbarui.', ok: true });
     onSaved();
   };
 
@@ -133,12 +134,22 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
 
   return (
     <div className="space-y-4">
-      <ScreenHeader title={profile ? 'Profil & Pengaturan' : 'Atur profil dulu'} subtitle={profile ? 'Data diri, target lomba, dan cadangan' : undefined} />
-      {!profile && <p className="text-sm text-slate-300">Isi data berikut agar beban latihan, zona kecepatan, dan prediksi lomba bisa dihitung. Semua data hanya tersimpan di perangkat ini.</p>}
+      <ScreenHeader
+        title={profile ? 'Profil & Pengaturan' : 'Atur profil dulu'}
+        subtitle={profile ? 'Data diri, Pelatih AI, dan cadangan perangkat' : undefined}
+      />
+      {!profile && (
+        <p className="text-sm text-slate-300">
+          Isi data berikut agar Kondisi Beban Tubuh, target detak jantung, dan prediksi lomba bisa dihitung. Semua data tersimpan lokal di perangkat ini.
+        </p>
+      )}
 
-      <form onSubmit={save} noValidate className="space-y-4 sport-card p-4">
+      {/* Kartu 1: Data Diri & Target Lomba */}
+      <form onSubmit={save} noValidate className="space-y-4 sport-card p-4" aria-labelledby="profil-data-judul">
+        <h2 id="profil-data-judul" className="font-display text-base font-bold text-white">1. Data Diri &amp; Target Lomba</h2>
+
         <Field label="Usia" hint="Tahun" type="number" inputMode="numeric" value={age || ''} onChange={(e) => setAge(Number(e.target.value))} error={errs.age} />
-        <Field label="Detak jantung istirahat" term="Resting HR, bpm" hint="Ukur saat bangun tidur, sebelum bangkit dari tempat tidur." name="restingHr" type="number" inputMode="numeric"
+        <Field label="Detak jantung istirahat" term="Resting HR, bpm" hint="Ukur saat bangun tidur sebelum beranjak dari kasur." name="restingHr" type="number" inputMode="numeric"
           defaultValue={profile?.restingHr} error={errs.restingHr} />
         <label className="flex min-h-11 items-center gap-3 text-sm font-semibold text-slate-200">
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="h-5 w-5 accent-coral" />
@@ -159,26 +170,16 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
         <PrimaryButton type="submit">Simpan profil</PrimaryButton>
       </form>
 
-      <section className="space-y-3 sport-card p-4" aria-labelledby="cadangan-judul">
-        <h2 id="cadangan-judul" className="text-base font-bold">Cadangan data</h2>
-        <p className="text-sm text-slate-400">Cadangan berisi seluruh sesi dan profil. Data hanya tersimpan di perangkat ini, jadi buat cadangan secara berkala.</p>
-        <Button variant="secondary" onClick={exportJson}>Ekspor cadangan (.json)</Button>
-        <label className="flex min-h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-navy-700 px-4 py-2 text-sm font-semibold text-slate-300 focus-within:ring-2 focus-within:ring-coral">
-          Pulihkan dari cadangan (.json)
-          <input type="file" accept=".json" onChange={pickImport} className="sr-only" />
-        </label>
-        {backupMsg && <Notice msg={backupMsg} />}
-      </section>
-
+      {/* Kartu 2: Pelatih AI (Gemini) */}
       <section className="space-y-3 sport-card p-4" aria-labelledby="gemini-coach-judul">
         <div className="flex items-center justify-between gap-2">
-          <h2 id="gemini-coach-judul" className="text-base font-bold">Gemini AI Coach</h2>
+          <h2 id="gemini-coach-judul" className="font-display text-base font-bold text-white">2. Pelatih AI (Gemini)</h2>
           <StatusPill tone={hasGeminiKey ? 'good' : 'info'}>
             {hasGeminiKey ? 'Key tersimpan' : 'Belum diatur'}
           </StatusPill>
         </div>
         <p className="text-sm text-slate-400">
-          Opsional (BYOK). API Key hanya disimpan di penyimpanan lokal browser ini dan tidak pernah disertakan dalam cadangan JSON.
+          Opsional. API Key hanya disimpan di browser perangkat ini dan tidak pernah ikut di file cadangan.
         </p>
         <Field
           label="Gemini API Key"
@@ -187,7 +188,7 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
           placeholder="AIza..."
           value={geminiKey}
           onChange={(e) => setGeminiKey(e.target.value)}
-          hint="Dipakai saat Anda menekan tombol Analisis Mendalam AI di Saran Pelatih."
+          hint="Dipakai saat Anda menekan tombol Tanya Pelatih AI di Beranda atau Susun Jadwal dengan AI di tab Program."
         />
         <div className="grid grid-cols-2 gap-2">
           <Button variant="secondary" onClick={saveGemini}>Simpan</Button>
@@ -196,13 +197,35 @@ export default function Profil({ profile, onSaved }: { profile: UserProfile | nu
         {geminiMsg && <Notice msg={geminiMsg} />}
       </section>
 
-      {profile && (
-        <section className="space-y-3 rounded-2xl border border-red-500/30 bg-navy-800 p-4" aria-labelledby="bahaya-judul">
-          <h2 id="bahaya-judul" className="text-base font-bold text-red-300">Zona berbahaya</h2>
-          <p className="text-sm text-slate-400">Menghapus semua sesi dan profil dari perangkat ini. Ekspor cadangan dulu bila perlu.</p>
-          <Button variant="danger" onClick={() => setAskWipe(true)}>Hapus semua data lokal</Button>
-        </section>
-      )}
+      {/* Kartu 3: Cadangan & Reset Data (terlipat) */}
+      <details className="group sport-card p-4">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 font-display text-base font-bold text-white">
+          <span>3. Cadangan &amp; Reset Data</span>
+          <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
+        </summary>
+
+        <div className="mt-3 space-y-4 border-t border-white/[0.06] pt-3">
+          <div className="space-y-3">
+            <p className="text-sm text-slate-400">
+              Cadangan berisi seluruh sesi lari, jadwal, dan profil. Karena semua data tersimpan lokal di browser ini, buat cadangan secara berkala.
+            </p>
+            <Button variant="secondary" onClick={exportJson}>Ekspor cadangan (.json)</Button>
+            <label className="flex min-h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-navy-700 px-4 py-2 text-sm font-semibold text-slate-300 focus-within:ring-2 focus-within:ring-coral">
+              Pulihkan dari cadangan (.json)
+              <input type="file" accept=".json" onChange={pickImport} className="sr-only" />
+            </label>
+            {backupMsg && <Notice msg={backupMsg} />}
+          </div>
+
+          {profile && (
+            <div className="space-y-3 border-t border-red-500/20 pt-3">
+              <h3 className="text-sm font-bold text-red-300">Reset Data Lokal</h3>
+              <p className="text-xs text-slate-400">Menghapus semua sesi dan profil dari perangkat ini. Ekspor cadangan dulu bila perlu.</p>
+              <Button variant="danger" onClick={() => setAskWipe(true)}>Hapus semua data lokal</Button>
+            </div>
+          )}
+        </div>
+      </details>
 
       {pendingImport && (
         <ConfirmDialog id="impor" title="Pulihkan dari cadangan?" confirmLabel="Ya, pulihkan" onConfirm={doImport} onCancel={() => setPendingImport(null)}>

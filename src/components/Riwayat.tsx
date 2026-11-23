@@ -20,8 +20,12 @@ const TYPE_IDS = Object.keys(TYPE_LABEL) as WorkoutType[];
 const TYPE_BORDER: Record<WorkoutType, string> = {
   easy: 'border-l-sky-400', tempo: 'border-l-amber-400', interval: 'border-l-amber-400', long_run: 'border-l-indigo-400', race: 'border-l-coral',
 };
-const TYPE_TEXT: Record<WorkoutType, string> = {
-  easy: 'text-sky-300', tempo: 'text-amber-300', interval: 'text-amber-300', long_run: 'text-indigo-300', race: 'text-coral',
+const TYPE_BADGE: Record<WorkoutType, string> = {
+  easy: 'border-sky-400/30 bg-sky-400/15 text-sky-300',
+  tempo: 'border-amber-400/30 bg-amber-400/15 text-amber-300',
+  interval: 'border-amber-400/30 bg-amber-400/15 text-amber-300',
+  long_run: 'border-indigo-400/30 bg-indigo-400/15 text-indigo-300',
+  race: 'border-coral/30 bg-coral/15 text-coral',
 };
 
 interface Filters { dist: DistFilter; source: SourceFilter; type: TypeFilter }
@@ -100,15 +104,39 @@ export default function Riwayat({ workouts, reload }: { workouts: Workout[]; rel
 
       {list.map((w, i) => (
         <button key={w.id ?? i} type="button" onClick={() => setSel(w)}
-          className={`block w-full rounded-xl border border-white/[0.07] border-l-[3px] bg-navy-800 p-3 text-left tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${TYPE_BORDER[w.workoutType]}`}>
+          className={`sport-card block w-full border-l-[3px] p-4 text-left tabular-nums transition hover:border-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${TYPE_BORDER[w.workoutType]}`}>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-bold">{fmtDate(w.date)}</span>
-            <span className={`text-[11px] font-extrabold uppercase tracking-wide ${TYPE_TEXT[w.workoutType]}`}>{TYPE_LABEL[w.workoutType]} · {w.source}</span>
+            <span className="text-sm font-bold text-slate-100">{fmtDate(w.date)}</span>
+            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${TYPE_BADGE[w.workoutType]}`}>
+              {TYPE_LABEL[w.workoutType]}
+            </span>
           </div>
-          <div className="mt-1 text-sm text-slate-200">
-            {w.distanceKm.toFixed(2)} km · {fmtHms(w.durationSec)} · {fmtPace(w.avgPaceSecPerKm)} /km
-          </div>
-          {w.note && <div className="mt-1 truncate text-xs text-slate-400">{w.note}</div>}
+
+          <dl className="mt-3 grid grid-cols-3 gap-2">
+            <div>
+              <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Jarak</dt>
+              <dd className="mt-0.5 font-display text-lg font-extrabold text-white">
+                {w.distanceKm.toFixed(2)} <span className="text-xs font-semibold text-slate-400">km</span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Waktu</dt>
+              <dd className="mt-0.5 font-display text-lg font-extrabold text-white">{fmtHms(w.durationSec)}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Pace rata-rata</dt>
+              <dd className="mt-0.5 font-display text-lg font-extrabold text-white">
+                {fmtPace(w.avgPaceSecPerKm)} <span className="text-xs font-semibold text-slate-400">/km</span>
+              </dd>
+            </div>
+          </dl>
+
+          {(w.avgHr != null || w.note) && (
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/[0.06] pt-2 text-xs text-slate-400">
+              {w.avgHr != null && <span className="shrink-0 font-medium text-slate-300">HR rata-rata: {w.avgHr} bpm</span>}
+              {w.note && <span className="min-w-0 flex-1 truncate">{w.note}</span>}
+            </div>
+          )}
         </button>
       ))}
 
@@ -181,8 +209,8 @@ function Detail({ w, onClose, onDelete, onSaved }: { w: Workout; onClose: () => 
     ['Pace', `${fmtPace(w.avgPaceSecPerKm)} /km`],
     ['Detak jantung rata-rata', w.avgHr ? `${w.avgHr} bpm` : '–'],
     ['Detak jantung maks', w.maxHr ? `${w.maxHr} bpm` : '–'],
-    ['Beban (TRIMP)', w.trimp != null ? String(Math.round(w.trimp)) : '–'],
-    ['Efisiensi (EF)', w.efficiencyFactor != null ? w.efficiencyFactor.toFixed(2) : '–'],
+    ['Poin Usaha (TRIMP)', w.trimp != null ? String(Math.round(w.trimp)) : '–'],
+    ['Efisiensi Jantung (EF)', w.efficiencyFactor != null ? w.efficiencyFactor.toFixed(2) : '–'],
     ['Cardiac drift', drift != null ? `${drift.toFixed(1)}%` : '–'],
   ];
 

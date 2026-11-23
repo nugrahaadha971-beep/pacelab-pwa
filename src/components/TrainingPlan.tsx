@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, RotateCcw, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, Sparkles } from 'lucide-react';
 import type { UserProfile, Workout } from '../analytics/types';
 import { acwr, cardiacDrift, efTrend } from '../analytics/workload';
 import { generateAiTrainingPlan, loadGeminiApiKey } from '../analytics/aiCoach';
@@ -327,7 +327,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
         )}
         {missed > 0 && <p className="text-sm text-amber-400">{missed} sesi terlewat. Buka "Atur jadwal" untuk menggeser jadwal.</p>}
 
-        {/* Kontrol & Pratinjau Penyusunan Jadwal AI (BYOK Gemini) */}
+        {/* Kontrol Penyusunan Jadwal AI (pratinjau dibuka di dalam Sheet) */}
         <div className={`${card} space-y-3`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Button
@@ -344,7 +344,7 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
             {hasAiActive && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/15 px-2.5 py-1 text-xs font-bold text-emerald-300">
                 <Sparkles className="h-3.5 w-3.5" aria-hidden />
-                <span>Program Aktif: Disusun Gemini AI</span>
+                <span>Program Aktif: Gemini AI</span>
               </span>
             )}
           </div>
@@ -375,37 +375,6 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
               {aiError}
             </p>
           )}
-
-          {aiPreview && (
-            <div className="sport-subcard space-y-3 border border-sky-400/30 p-3.5" aria-live="polite">
-              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-sky-300">
-                <Sparkles className="h-3.5 w-3.5" aria-hidden />
-                <span>Pratinjau Jadwal Gemini AI ({aiPreview.sessions.length} sesi)</span>
-              </div>
-              <p className="text-sm leading-relaxed text-slate-200">{aiPreview.summary}</p>
-              <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                {aiPreview.sessions.map((s) => (
-                  <li key={s.id} className={`rounded-xl border-l-[3px] ${KIND_BORDER[s.kind]} bg-navy-900/90 p-2.5 text-xs`}>
-                    <div className="flex flex-wrap items-center justify-between gap-1">
-                      <span className="font-semibold text-slate-100">{formatDateId(s.date)}</span>
-                      <span className="font-bold text-sky-300">{KIND_LABEL[s.kind]}</span>
-                    </div>
-                    <div className="mt-0.5 font-semibold text-slate-200">{s.name}</div>
-                    <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums text-slate-400">
-                      {s.distanceKm != null && <span>Jarak: {s.distanceKm.toFixed(1)} km</span>}
-                      {s.durationMin != null && <span>Durasi: {s.durationMin} menit</span>}
-                      {s.hr && <span>HR: {s.hr[0]}–{s.hr[1]} bpm</span>}
-                    </div>
-                    {s.note && <p className="mt-1 text-slate-400">{s.note}</p>}
-                  </li>
-                ))}
-              </ul>
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <Button variant="secondary" onClick={() => setAiPreview(null)}>Batal</Button>
-                <Button onClick={handleApplyAiPlan}>Terapkan ke Jadwal</Button>
-              </div>
-            </div>
-          )}
         </div>
       </header>
 
@@ -428,8 +397,8 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
         ) : (
           <>
             <p className="mt-1 text-sm tabular-nums text-slate-400">
-              {fmtDate(last.date)} · Rasio beban (ACWR) {lastIn.acwrRatio == null ? '–' : lastIn.acwrRatio.toFixed(2)}
-              {' · '}Efisiensi (EF) {decision.efGainPct == null ? '–' : `${decision.efGainPct >= 0 ? '+' : ''}${decision.efGainPct.toFixed(1)}% vs rata-rata 14 hari`}
+              {fmtDate(last.date)} · Beban tubuh (ACWR) {lastIn.acwrRatio == null ? '–' : lastIn.acwrRatio.toFixed(2)}
+              {' · '}Efisiensi jantung (EF) {decision.efGainPct == null ? '–' : `${decision.efGainPct >= 0 ? '+' : ''}${decision.efGainPct.toFixed(1)}% vs rata-rata 14 hari`}
               {' · '}Drift {lastIn.lastDriftPct == null ? '–' : `${lastIn.lastDriftPct.toFixed(1)}%`}
             </p>
             {adapted.notes.length === 0 ? (
@@ -491,10 +460,32 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
           const { min, km } = loadOf(s);
           const showName = s.name && s.kind !== 'race' && !['Easy Run', 'Long Run'].includes(s.name);
           const swapChoices = week.sessions.filter((o) => o.id !== s.id && o.kind !== 'race' && !done.has(o.id)).map((o) => byId.get(o.id) as PlanSession);
+          const sessionTitle = s.convertedFrom || s.test === 'maf'
+            ? s.name
+            : `${KIND_LABEL[s.kind]}${showName ? ` · ${s.name}` : ''}`;
+
+          const loadPrimary = s.kind === 'race'
+            ? profile.targetDistance
+            : easy && km != null
+              ? `${km.toFixed(1)} km`
+              : min != null
+                ? `≈ ${Math.round(min)} menit`
+                : s.distanceKm != null
+                  ? `${s.distanceKm.toFixed(1)} km`
+                  : 'Sesuai langkah';
+
+          const loadSub = s.kind === 'race'
+            ? `Target ${fmtHms(profile.targetTimeSec)}`
+            : easy && km != null && min != null
+              ? `Sekitar ${Math.round(min)} menit`
+              : s.kind === 'speed' && min != null
+                ? 'Termasuk pemanasan'
+                : null;
+
           return (
             <article key={s.id} className={`${card} border-l-[3px] ${KIND_BORDER[s.kind]} ${isDone ? 'opacity-80' : ''}`}>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold tabular-nums">{formatDateId(s.date)}</span>
+                <span className="text-sm font-semibold tabular-nums text-slate-200">{formatDateId(s.date)}</span>
                 <div className={`flex items-center gap-2 ${statusColor}`}>
                   <span className="text-sm font-semibold">{status}{auto ? ' (otomatis)' : ''}</span>
                   <button type="button" role="checkbox" aria-checked={isDone} disabled={auto} onClick={() => update(toggleDone(st, s.id))}
@@ -506,78 +497,113 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
                   </button>
                 </div>
               </div>
-              <h3 className="text-base font-bold">{s.convertedFrom || s.test === 'maf' ? s.name : `${KIND_LABEL[s.kind]}${showName ? ` · ${s.name}` : ''}`}</h3>
-              <p className="mt-0.5 text-sm text-slate-400">{s.zone === 'maf' ? MAF_HINT[s.kind] : KIND_HINT[s.kind]}</p>
-              {s.kind === 'race' && <div className="mt-1 text-sm">{s.name}</div>}
-              {easy && km != null && min != null && (
-                <div className="mt-2 rounded-xl bg-navy-900 p-3 text-sm tabular-nums">
-                  <div>Jarak: <strong className="text-base">{km.toFixed(1)} km</strong> <span className="text-slate-400">(≈{Math.round(min)} menit)</span></div>
-                  {s.zone === 'maf' ? (
-                    <>
-                      {s.hr && <div>Detak jantung (utama): <strong className="text-base text-emerald-400">{s.hr[0]}–{s.hr[1]} bpm</strong></div>}
-                      {mafCenter != null ? (
-                        <div>Pace perkiraan: <strong className="text-base text-slate-100">{fmtRangeKm(mafCenter + delta)}</strong> <span className="text-slate-400">(ikuti detak jantung)</span></div>
+
+              <h3 className="mt-1 font-display text-lg font-extrabold text-white">{sessionTitle}</h3>
+
+              <dl className="mt-3 grid grid-cols-2 gap-2.5 tabular-nums">
+                <div className="sport-subcard p-3">
+                  <dt className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Jarak / Durasi</dt>
+                  <dd className="mt-1 font-display text-lg font-extrabold text-white">{loadPrimary}</dd>
+                  {loadSub && <div className="mt-0.5 text-xs text-slate-400">{loadSub}</div>}
+                </div>
+                <div className="sport-subcard p-3">
+                  <dt className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Target Detak Jantung</dt>
+                  <dd className={`mt-1 font-display text-lg font-extrabold ${s.hr ? 'text-emerald-400' : 'text-slate-300'}`}>
+                    {s.hr ? `${s.hr[0]}–${s.hr[1]} bpm` : 'Isi di Profil'}
+                  </dd>
+                  <div className="mt-0.5 text-xs text-slate-400">
+                    {s.hr
+                      ? (s.zone === 'maf' ? 'Zona MAF' : s.zone === 'interval' || s.zone === 'test' ? 'Di akhir ulangan' : 'Jadikan patokan')
+                      : (s.zone === 'maf' ? 'Lengkapi usia' : 'Lengkapi HR maks')}
+                  </div>
+                </div>
+              </dl>
+
+              <details className="group mt-3 rounded-xl border border-white/[0.06] bg-navy-900/70">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-sm font-semibold text-slate-300">
+                  <span>Detail &amp; atur sesi</span>
+                  <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
+                </summary>
+
+                <div className="space-y-3 border-t border-white/[0.06] px-3 py-3 text-sm">
+                  <p className="text-slate-300">{s.zone === 'maf' ? MAF_HINT[s.kind] : KIND_HINT[s.kind]}</p>
+
+                  {s.kind === 'race' && <div className="font-semibold text-slate-200">{s.name}</div>}
+
+                  {easy && (
+                    <div className="rounded-xl bg-navy-800/80 p-3 text-sm tabular-nums">
+                      {s.zone === 'maf' ? (
+                        mafCenter != null ? (
+                          <div>Pace perkiraan: <strong className="text-slate-100">{fmtRangeKm(mafCenter + delta)}</strong> <span className="text-slate-400">(ikuti detak jantung)</span></div>
+                        ) : (
+                          <div>Pace: <strong className="text-slate-100">Sesuai HR</strong> <span className="text-slate-400">(patokan pace muncul setelah 1 sesi MAF ≥ 3 km)</span></div>
+                        )
                       ) : (
-                        <div>Pace: <strong className="text-base text-slate-100">Sesuai HR</strong> <span className="text-slate-400">(patokan pace muncul setelah 1 sesi MAF ≥ 3 km)</span></div>
+                        <div>Perkiraan pace santai: <strong className="text-emerald-400">{fmtRangeKm(easyPace + delta)}</strong></div>
                       )}
-                    </>
-                  ) : (
-                    <>
-                      <div>Pace: <strong className="text-base text-emerald-400">{fmtRangeKm(easyPace + delta)}</strong></div>
-                      {s.hr && <div>Detak jantung: <strong className="text-base text-emerald-400">{s.hr[0]}–{s.hr[1]} bpm</strong></div>}
-                    </>
+                    </div>
+                  )}
+
+                  {!easy && s.hr && s.zone && (
+                    <div className="tabular-nums text-slate-300">
+                      {ZONE_LABEL[s.zone]}: target <strong className="text-emerald-400">{s.hr[0]}–{s.hr[1]} bpm</strong>
+                      {s.zone === 'interval' || s.zone === 'test' ? ' di akhir tiap ulangan' : ''}
+                    </div>
+                  )}
+
+                  {calibPace && <div className="tabular-nums text-slate-200">Pace ulangan (dari Tes 3K): <strong className="text-emerald-400">{fmtRangeMinMax(calibPace)}</strong></div>}
+
+                  {s.hr && (
+                    <p className="text-xs leading-relaxed text-amber-300">{s.zone === 'maf' ? MAF_RULE : HR_FIRST_RULE}{s.zone === 'easy' ? ` Jalan sampai detak jantung < ${s.hr[0]} bpm.` : ''}</p>
+                  )}
+                  {!s.hr && s.zone && <p className="text-xs text-slate-400">{s.zone === 'maf' ? 'Isi usia di Profil untuk melihat target bpm MAF.' : 'Isi detak jantung maksimal di Profil untuk melihat target bpm.'}</p>}
+
+                  {s.adjDurationMin != null && s.durationMin != null && (
+                    <div className="text-xs tabular-nums text-coral">Durasi disesuaikan: {Math.round(s.durationMin)} → {Math.round(s.adjDurationMin)} menit</div>
+                  )}
+                  {s.demoted && <p className="text-xs text-slate-400">Speed diganti Easy Run: tidak ada hari yang tidak bersebelahan dengan Long Run.</p>}
+
+                  {(s.adjustments ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {(s.adjustments ?? []).map((a) => <span key={a.code} className={badge}>{a.badge}</span>)}
+                    </div>
+                  )}
+
+                  {s.note && <p className="text-xs leading-relaxed text-slate-400">{s.note}</p>}
+
+                  {s.steps.length > 0 && (
+                    <div className="space-y-1 text-slate-200">
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Panduan langkah</div>
+                      {s.steps.map((stp, j) => {
+                        const sec = curriculum === 'nike5k' ? paceSecPerKm(paceKeyFor(stp), row, delta) : null;
+                        return <div key={j}>{stp}{sec != null && <em className="text-emerald-400"> → {fmtKm(sec)}</em>}</div>;
+                      })}
+                    </div>
+                  )}
+
+                  {gp != null && (s.kind === 'speed' || s.kind === 'race') && s.test !== 'maf' && (
+                    <div className="text-xs tabular-nums text-slate-300">
+                      {s.kind === 'race' ? 'Target pace PB' : `Pace menuju PB ${profile.targetDistance}`}: <span className="font-semibold">{fmtKm(gp)}</span>
+                    </div>
+                  )}
+
+                  {s.kind !== 'race' && (
+                    <div className="grid grid-cols-1 gap-2 border-t border-white/[0.06] pt-3">
+                      <label className="text-xs font-semibold text-slate-200">Ubah tanggal sesi
+                        <input type="date" value={s.date} max={addDays(raceIso, -1)}
+                          onChange={(e) => { if (e.target.value) update(setSessionDate(st, s.id, e.target.value)); }} className={control} />
+                      </label>
+                      <label className="text-xs font-semibold text-slate-200">Tukar dengan sesi lain
+                        <select value="" className={control}
+                          onChange={(e) => { const o = swapChoices.find((x) => x.id === e.target.value); if (o) update(swapSessions(st, s, o)); }}>
+                          <option value="">Pilih sesi…</option>
+                          {swapChoices.map((o) => <option key={o.id} value={o.id}>{formatDayMonth(o.date)} · {KIND_LABEL[o.kind]}</option>)}
+                        </select>
+                      </label>
+                    </div>
                   )}
                 </div>
-              )}
-              {!easy && s.hr && s.zone && (
-                <div className="mt-2 text-sm tabular-nums">{ZONE_LABEL[s.zone]}: detak jantung <strong className="text-emerald-400">{s.hr[0]}–{s.hr[1]} bpm</strong>
-                  {s.zone === 'interval' || s.zone === 'test' ? ' di akhir tiap ulangan' : ''}</div>
-              )}
-              {calibPace && <div className="text-sm tabular-nums">Pace ulangan (dari Tes 3K): <strong className="text-emerald-400">{fmtRangeMinMax(calibPace)}</strong></div>}
-              {s.hr && (
-                <p className="mt-1 text-sm text-amber-300">{s.zone === 'maf' ? MAF_RULE : HR_FIRST_RULE}{s.zone === 'easy' ? ` Jalan sampai detak jantung < ${s.hr[0]} bpm.` : ''}</p>
-              )}
-              {!s.hr && s.zone && <p className="mt-1 text-sm text-slate-400">{s.zone === 'maf' ? 'Isi usia di Profil untuk melihat target bpm MAF.' : 'Isi detak jantung maksimal di Profil untuk melihat target bpm.'}</p>}
-              {s.kind === 'speed' && min != null && (
-                <div className="mt-1 text-sm tabular-nums">Total ≈ <strong>{Math.round(min)} menit</strong> (termasuk pemanasan & pemulihan)</div>
-              )}
-              {s.adjDurationMin != null && s.durationMin != null && (
-                <div className="text-sm tabular-nums text-coral">Durasi disesuaikan: {Math.round(s.durationMin)} → {Math.round(s.adjDurationMin)} menit</div>
-              )}
-              {s.demoted && <p className="text-sm text-slate-400">Speed diganti Easy Run: tidak ada hari yang tidak bersebelahan dengan Long Run.</p>}
-              {(s.adjustments ?? []).length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {(s.adjustments ?? []).map((a) => <span key={a.code} className={badge}>{a.badge}</span>)}
-                </div>
-              )}
-              {s.note && <p className="text-sm text-slate-400">{s.note}</p>}
-              {s.steps.map((stp, j) => {
-                const sec = curriculum === 'nike5k' ? paceSecPerKm(paceKeyFor(stp), row, delta) : null;
-                return <div key={j} className="text-sm">{stp}{sec != null && <em className="text-emerald-400"> → {fmtKm(sec)}</em>}</div>;
-              })}
-              {gp != null && (s.kind === 'speed' || s.kind === 'race') && s.test !== 'maf' && (
-                <div className="mt-1 text-sm tabular-nums text-slate-300">
-                  {s.kind === 'race' ? 'Target pace PB' : `Pace menuju PB ${profile.targetDistance}`}: <span className="font-semibold">{fmtKm(gp)}</span>
-                </div>
-              )}
-              {s.kind !== 'race' && (
-                <details className="mt-3 rounded-xl bg-navy-900">
-                  <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-semibold text-slate-300">Ubah atau tukar jadwal sesi ini</summary>
-                  <div className="grid grid-cols-1 gap-2 px-3 pb-3">
-                    <label className="text-sm font-semibold text-slate-200">Tanggal sesi
-                      <input type="date" value={s.date} max={addDays(raceIso, -1)}
-                        onChange={(e) => { if (e.target.value) update(setSessionDate(st, s.id, e.target.value)); }} className={control} />
-                    </label>
-                    <label className="text-sm font-semibold text-slate-200">Tukar dengan sesi lain
-                      <select value="" className={control}
-                        onChange={(e) => { const o = swapChoices.find((x) => x.id === e.target.value); if (o) update(swapSessions(st, s, o)); }}>
-                        <option value="">Pilih sesi…</option>
-                        {swapChoices.map((o) => <option key={o.id} value={o.id}>{formatDayMonth(o.date)} · {KIND_LABEL[o.kind]}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                </details>
-              )}
+              </details>
             </article>
           );
         })}
@@ -607,6 +633,41 @@ export default function TrainingPlan({ profile, workouts, defaultK5Sec, currentP
       )}
 
       {settingsSheet(missed)}
+
+      {aiPreview && (
+        <Sheet
+          title={`Pratinjau Jadwal AI (${aiPreview.sessions.length} sesi)`}
+          titleId="ai-preview-judul"
+          onClose={() => setAiPreview(null)}
+        >
+          <div className="space-y-4">
+            <p className="rounded-xl border border-sky-400/25 bg-sky-400/10 px-3.5 py-2.5 text-sm leading-relaxed text-slate-200">
+              {aiPreview.summary}
+            </p>
+            <ul className="space-y-2.5">
+              {aiPreview.sessions.map((s) => (
+                <li key={s.id} className={`sport-subcard border-l-[3px] ${KIND_BORDER[s.kind]} p-3 text-xs`}>
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <span className="font-semibold text-slate-100">{formatDateId(s.date)}</span>
+                    <span className="font-bold text-sky-300">{KIND_LABEL[s.kind]}</span>
+                  </div>
+                  <div className="mt-0.5 text-sm font-bold text-slate-100">{s.name}</div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums text-slate-300">
+                    {s.distanceKm != null && <span>Jarak: {s.distanceKm.toFixed(1)} km</span>}
+                    {s.durationMin != null && <span>Durasi: {s.durationMin} menit</span>}
+                    {s.hr && <span>Detak jantung: {s.hr[0]}–{s.hr[1]} bpm</span>}
+                  </div>
+                  {s.note && <p className="mt-1 text-slate-400">{s.note}</p>}
+                </li>
+              ))}
+            </ul>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <Button variant="secondary" onClick={() => setAiPreview(null)}>Batal</Button>
+              <Button onClick={handleApplyAiPlan}>Terapkan ke Jadwal</Button>
+            </div>
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }

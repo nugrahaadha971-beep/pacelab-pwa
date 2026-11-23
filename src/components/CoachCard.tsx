@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, Heart, Sparkles, TrendingUp } from 'lucide-react';
+import { Activity, ChevronDown, Heart, RefreshCw, Sparkles } from 'lucide-react';
 import type { UserProfile, Workout } from '../analytics/types';
 import { acwr, cardiacDrift, DAY_MS, efTrend } from '../analytics/workload';
 import type { AcwrStatus } from '../analytics/workload';
 import { predictAll, velocityFor, ZONE_FRACTION } from '../analytics/predictor';
 import { coachAdvice, DRIFT_WARN_PCT } from '../analytics/coachEngine';
-import type { SessionRec } from '../analytics/coachEngine';
-import { loadGeminiApiKey, parseCoachPoints, requestAiCoachAnalysis } from '../analytics/aiCoach';
+import {
+  loadCachedAiCoachAnalysis,
+  loadGeminiApiKey,
+  parseCoachPoints,
+  requestAiCoachAnalysis,
+} from '../analytics/aiCoach';
 import { mafHr, mafTests } from '../plans/maf';
 import { fmtPace } from '../plans/pace';
 import { resolvePlan, selectBestPlan } from '../plans/planSelector';
@@ -15,39 +19,26 @@ import { Button } from './ui';
 
 type PaceZoneKey = keyof typeof ZONE_FRACTION;
 
-const SESSION_LABEL: Record<SessionRec, string> = {
-  easy: 'Easy Run',
-  tempo: 'Tempo Run',
-  interval: 'Interval',
-  long_run: 'Long Run',
-  recovery: 'Recovery Run',
-  rest: 'Istirahat',
-};
-
-const STATUS_BADGE: Record<AcwrStatus, { label: string; badge: string; pin: string; border: string }> = {
+const STATUS_BADGE: Record<AcwrStatus, { label: string; badge: string; pin: string }> = {
   unknown: {
-    label: 'Data Belum Cukup',
+    label: 'Belum Cukup Data',
     badge: 'bg-slate-400/15 text-slate-300 border-slate-400/25',
     pin: 'bg-slate-300 ring-slate-300/30',
-    border: 'border-white/5',
   },
   undertraining: {
-    label: 'Beban Rendah',
+    label: 'Ringan',
     badge: 'bg-sky-400/15 text-sky-300 border-sky-400/30',
     pin: 'bg-sky-400 ring-sky-400/35',
-    border: 'border-sky-400/20',
   },
   sweet_spot: {
-    label: 'Aman · Optimal',
+    label: 'Aman',
     badge: 'bg-emerald-400/15 text-emerald-300 border-emerald-400/30',
     pin: 'bg-emerald-400 ring-emerald-400/35',
-    border: 'border-emerald-400/20',
   },
   high_fatigue: {
     label: 'Terlalu Berat',
     badge: 'bg-coral/15 text-coral border-coral/30',
     pin: 'bg-coral ring-coral/35',
-    border: 'border-coral/25',
   },
 };
 
@@ -94,7 +85,7 @@ const PACE_ZONES: ReadonlyArray<{
   {
     key: 'interval',
     name: 'Interval',
-    desc: 'Kecepatan tinggi & kapasitas VO2max',
+    desc: 'Kecepatan tinggi & kapasitas maksimal',
     barPct: '96%',
     barColor: 'bg-coral',
     textColor: 'text-coral',
@@ -125,10 +116,10 @@ export function ZonaPaceCard({ vdot, maxHr }: { vdot: number; maxHr: number | nu
       <div className="flex items-center justify-between gap-2">
         <div>
           <h2 className="text-base font-bold tracking-tight text-slate-100">Zona Pace</h2>
-          <p className="text-xs text-slate-400">Target kecepatan latihan berdasarkan kebugaran terkini</p>
+          <p className="text-xs text-slate-400">Target kecepatan latihan berdasarkan Skor Kebugaran Lari</p>
         </div>
         <span className="shrink-0 rounded-full border border-sky-400/30 bg-sky-400/15 px-3 py-1 text-xs font-extrabold tabular-nums text-sky-300">
-          VDOT {vdot.toFixed(1)}
+          Skor {vdot.toFixed(1)} <span className="font-semibold text-sky-300/75">(VDOT)</span>
         </span>
       </div>
 
@@ -174,13 +165,51 @@ export function ZonaPaceCard({ vdot, maxHr }: { vdot: number; maxHr: number | nu
   );
 }
 
+function buildFriendlyAdvice(
+  status: AcwrStatus,
+  session: ReturnType<typeof coachAdvice>['session'],
+  durationAddMin: number,
+  curriculum: ReturnType<typeof resolvePlan>,
+  driftHigh: boolean,
+): string {
+  const driftNote = driftHigh
+    ? ' Detak jantung sempat naik di sesi terakhir—jaga pace lebih santai hari ini.'
+    : '';
+  switch (status) {
+    case 'unknown':
+      return 'Catat beberapa sesi lari dulu agar kondisi beban tubuh Anda bisa dinilai.';
+    case 'high_fatigue':
+      return (
+        (session === 'rest'
+          ? 'Beban latihan sedang terlalu berat. Ambil istirahat penuh hari ini agar tubuh pulih.'
+          : 'Beban latihan sedang terlalu berat. Pilih lari pemulihan yang sangat pelan dan singkat.') +
+        driftNote
+      );
+    case 'undertraining':
+      if (curriculum === 'maf') {
+        return `Beban latihan minggu ini tergolong ringan. Tambah durasi lari santai sekitar ${durationAddMin || 10} menit di zona detak jantung nyaman.${driftNote}`;
+      }
+      return `Beban latihan minggu ini tergolong ringan. Anda bisa menambah durasi lari santai sekitar ${durationAddMin || 10} menit secara bertahap.${driftNote}`;
+    case 'sweet_spot':
+    default:
+      if (curriculum === 'maf') {
+        return `Kondisi beban tubuh seimbang dan aman. Lanjutkan lari di zona detak jantung nyaman tanpa mengejar kecepatan.${driftNote}`;
+      }
+      return (
+        (session === 'tempo'
+          ? 'Kondisi beban tubuh seimbang dan aman. Anda siap melanjutkan progres sesuai jadwal latihan.'
+          : 'Kondisi beban tubuh seimbang dan aman. Lanjutkan latihan dengan lari santai sesuai jadwal.') +
+        driftNote
+      );
+  }
+}
+
 export default function CoachCard({ workouts, profile }: { workouts: Workout[]; profile: UserProfile }) {
   const t = Date.now();
   const load = acwr(workouts, profile, t);
   const ef = efTrend(workouts, t);
   const last = [...workouts].sort((a, b) => b.date - a.date)[0];
   const drift = last ? cardiacDrift(last.laps) : null;
-  // Kurikulum yang sama dengan Beranda (nextSession): mode manual menang, lalu rekomendasi otomatis.
   const preds = predictAll(workouts, t);
   const curriculum = resolvePlan(loadPlanMode(), selectBestPlan(workouts, profile, { now: t, projected5kSec: preds['5K']?.finalSec ?? null }));
   const advice = coachAdvice({
@@ -194,11 +223,12 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
   });
   const meta = STATUS_BADGE[load.status];
   const driftHigh = drift != null && drift > DRIFT_WARN_PCT;
+  const friendlySummary = buildFriendlyAdvice(load.status, advice.session, advice.durationAddMin, curriculum, driftHigh);
 
   const [hasApiKey, setHasApiKey] = useState(() => Boolean(loadGeminiApiKey()));
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<string | null>(() => loadCachedAiCoachAnalysis({ workouts, acwr: load, now: t }));
   const [aiError, setAiError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -216,12 +246,17 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
     };
   }, []);
 
+  useEffect(() => {
+    const cached = loadCachedAiCoachAnalysis({ workouts, acwr: load, now: t });
+    if (cached) setAiResult(cached);
+  }, [workouts, load.ratio, load.status]);
+
   const maf = mafHr(profile.age, loadMafAdj());
   const mafPts = mafTests(workouts, maf);
   const latestMafPaceSec = mafPts.length ? mafPts[mafPts.length - 1].paceSecPerKm : null;
   const canAnalyzeAi = hasApiKey && isOnline && !aiLoading;
 
-  const handleAnalyzeAi = async () => {
+  const handleAnalyzeAi = async (forceRefresh = false) => {
     const key = loadGeminiApiKey();
     setHasApiKey(Boolean(key));
     setAiLoading(true);
@@ -237,11 +272,11 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
           workouts,
           now: t,
         },
-        { apiKey: key, isOnline: navigator.onLine },
+        { apiKey: key, isOnline: navigator.onLine, forceRefresh },
       );
       setAiResult(text);
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'Gagal meminta analisis AI.');
+      setAiError(err instanceof Error ? err.message : 'Gagal meminta saran Pelatih AI.');
     } finally {
       setAiLoading(false);
     }
@@ -250,169 +285,160 @@ export default function CoachCard({ workouts, profile }: { workouts: Workout[]; 
   const aiPoints = aiResult ? parseCoachPoints(aiResult) : [];
 
   return (
-    <div className="space-y-4">
-      <section
-        aria-label="Saran Pelatih"
-        className="sport-card p-4"
-      >
-        {/* Header & Lencana Status */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-coral/15 text-coral">
-              <Activity className="h-4 w-4" aria-hidden />
-            </span>
-            <h2 className="text-base font-bold tracking-tight text-slate-100">Saran Pelatih</h2>
-          </div>
-
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold tabular-nums ${meta.badge}`}
-          >
-            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
-            <span>
-              {meta.label}
-              {load.ratio != null ? ` · ${load.ratio.toFixed(2)}` : ''}
-            </span>
+    <section aria-label="Kondisi Tubuh dan Pelatih" className="sport-card p-4">
+      {/* Header & Badge Kondisi Beban Tubuh */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-coral/15 text-coral">
+            <Activity className="h-4 w-4" aria-hidden />
           </span>
+          <div>
+            <h2 className="font-display text-base font-bold tracking-tight text-slate-100">Kondisi Tubuh &amp; Pelatih</h2>
+            <p className="text-[11px] text-slate-400">Kondisi Beban Tubuh</p>
+          </div>
         </div>
 
-        {/* Pita Spektrum ACWR (0.0 – 1.8) */}
-        {load.ratio != null && (
-          <div className="mt-4 sport-subcard px-3 py-2.5">
-            <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-slate-400">
-              <span>Spektrum Beban (ACWR)</span>
-              <span className="tabular-nums text-slate-200">Rasio {load.ratio.toFixed(2)}</span>
-            </div>
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${meta.badge}`}
+        >
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
+          <span>{meta.label}</span>
+        </span>
+      </div>
 
-            <div className="relative py-1.5">
-              {/* 3 Segmen Zona: <0.8 (44.4%), 0.8-1.3 (27.8%), >1.3 (27.8%) */}
-              <div className="flex h-2 w-full overflow-hidden rounded-full bg-navy-700">
-                <div className="h-full bg-sky-400/75" style={{ width: '44.44%' }} />
-                <div className="h-full bg-emerald-400" style={{ width: '27.78%' }} />
-                <div className="h-full bg-coral/85" style={{ width: '27.78%' }} />
-              </div>
+      {/* 1–2 Kalimat Saran Praktis */}
+      <p className="mt-3 text-sm leading-relaxed text-slate-200">{friendlySummary}</p>
 
-              {/* Pin Penanda Posisi Aktual */}
-              <div
-                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
-                style={{ left: `${acwrMarkerPct(load.ratio)}%` }}
-              >
-                <span className={`block h-3.5 w-3.5 rounded-full border-2 border-navy-900 ring-4 ${meta.pin}`} />
-              </div>
-            </div>
+      {/* Tombol Tanya Pelatih AI */}
+      <div className="mt-3.5">
+        <Button
+          variant="secondary"
+          onClick={() => void handleAnalyzeAi(false)}
+          disabled={!canAnalyzeAi}
+          className="gap-2 border-sky-400/30 bg-sky-400/10 text-sky-200 hover:bg-sky-400/15"
+        >
+          <Sparkles className="h-4 w-4 text-sky-300" aria-hidden />
+          <span>{aiLoading ? 'Meminta saran Pelatih AI…' : 'Tanya Pelatih AI'}</span>
+        </Button>
 
-            {/* Label batas sejajar dengan batas segmen: 0.8 = 44.44%, 1.3 = 72.22% */}
-            <div className="relative mt-1 h-4 text-[10px] font-medium tabular-nums text-slate-400" aria-hidden>
-              <span className="absolute left-0">0.0</span>
-              <span className="absolute -translate-x-1/2" style={{ left: '44.44%' }}>0.8</span>
-              <span className="absolute -translate-x-1/2" style={{ left: '72.22%' }}>1.3</span>
-              <span className="absolute right-0">1.8</span>
-            </div>
-            <div className="mt-1 flex justify-between text-[10px] font-medium text-slate-400">
-              <span className="text-sky-300">Rendah</span>
-              <span className="text-emerald-300">Aman</span>
-              <span className="text-coral">Berlebih</span>
-            </div>
-          </div>
+        {!hasApiKey && (
+          <p className="mt-2 text-xs text-slate-400">
+            Tambahkan Gemini API Key di tab Profil untuk mengaktifkan Pelatih AI.
+          </p>
+        )}
+        {hasApiKey && !isOnline && (
+          <p className="mt-2 text-xs text-slate-400">
+            Perangkat sedang offline. Hubungkan ke internet untuk memakai Pelatih AI.
+          </p>
         )}
 
-        {/* Kalimat Rekomendasi */}
-        <p className="mt-3.5 text-sm leading-relaxed text-slate-200">{advice.detail}</p>
-
-        {/* Kotak Sorotan Sesi Berikutnya */}
-        <div className="mt-3.5 flex items-center justify-between gap-3 sport-subcard px-3.5 py-2.5">
-          <div className="min-w-0">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Rekomendasi Sesi Berikutnya
-            </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-2">
-              <span className="text-sm font-bold text-slate-100">{SESSION_LABEL[advice.session]}</span>
-              {advice.durationAddMin > 0 && (
-                <span className="rounded-md bg-sky-400/15 px-2 py-0.5 text-xs font-extrabold tabular-nums text-sky-300">
-                  +{advice.durationAddMin} menit
-                </span>
-              )}
-            </div>
-          </div>
-          <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-        </div>
-
-        {/* Lencana Tren Aerobik & Cardiac Drift */}
-        {(advice.efNote || drift != null) && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {advice.efNote && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/15 px-2.5 py-1 text-xs font-bold text-emerald-300">
-                <TrendingUp className="h-3.5 w-3.5" aria-hidden />
-                <span>{advice.efNote}</span>
-              </span>
-            )}
-
-            {drift != null && (
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold tabular-nums ${
-                  driftHigh
-                    ? 'border-amber-400/30 bg-amber-400/15 text-amber-300'
-                    : 'border-white/10 bg-navy-900 text-slate-300'
-                }`}
-              >
-                {driftHigh && <AlertTriangle className="h-3.5 w-3.5" aria-hidden />}
-                <span>Cardiac drift terakhir: {drift.toFixed(1)}%</span>
-              </span>
-            )}
-          </div>
+        {aiError && (
+          <p role="alert" className="mt-2.5 rounded-xl bg-coral/15 px-3 py-2 text-xs leading-relaxed text-coral">
+            {aiError}
+          </p>
         )}
 
-        {/* Analisis Mendalam AI (BYOK Gemini, opsional & online-only) */}
-        <div className="mt-4 border-t border-white/[0.06] pt-3.5">
-          <Button
-            variant="secondary"
-            onClick={handleAnalyzeAi}
-            disabled={!canAnalyzeAi}
-            className="gap-2 border-sky-400/30 bg-sky-400/10 text-sky-200 hover:bg-sky-400/15"
-          >
-            <Sparkles className="h-4 w-4 text-sky-300" aria-hidden />
-            <span>{aiLoading ? 'Menganalisis latihan…' : 'Analisis Mendalam AI'}</span>
-          </Button>
-
-          {!hasApiKey && (
-            <p className="mt-2 text-xs text-slate-400">
-              Tambahkan Gemini API Key di tab Profil untuk mengaktifkan Analisis Mendalam AI.
-            </p>
-          )}
-          {hasApiKey && !isOnline && (
-            <p className="mt-2 text-xs text-slate-400">
-              Perangkat sedang offline. Hubungkan ke internet untuk memakai Analisis Mendalam AI.
-            </p>
-          )}
-
-          {aiError && (
-            <p role="alert" className="mt-2.5 rounded-xl bg-coral/15 px-3 py-2 text-xs leading-relaxed text-coral">
-              {aiError}
-            </p>
-          )}
-
-          {aiResult && (
-            <div className="mt-3 sport-subcard p-3" aria-live="polite">
+        {aiResult && (
+          <div className="mt-3 sport-subcard p-3" aria-live="polite">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-sky-300">
                 <Sparkles className="h-3.5 w-3.5" aria-hidden />
-                <span>Evaluasi &amp; Saran Gemini AI</span>
+                <span>Saran Pelatih AI</span>
               </div>
-              {aiPoints.length > 0 ? (
-                <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-200">
-                  {aiPoints.map((point, idx) => (
-                    <li key={idx} className="flex gap-2">
-                      <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
-                      <span>{point}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-200">{aiResult}</p>
+              <button
+                type="button"
+                onClick={() => void handleAnalyzeAi(true)}
+                disabled={!canAnalyzeAi}
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2 text-[11px] font-semibold text-sky-300 hover:bg-sky-400/10 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${aiLoading ? 'animate-spin' : ''}`} aria-hidden />
+                <span>Perbarui Analisis</span>
+              </button>
+            </div>
+            {aiPoints.length > 0 ? (
+              <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-slate-200">
+                {aiPoints.map((point, idx) => (
+                  <li key={idx} className="flex gap-2">
+                    <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+                    <span>{point}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-200">{aiResult}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Detail Rasio Beban (ACWR) & Efisiensi Jantung (EF) terlipat */}
+      <details className="group mt-3.5 rounded-xl border border-white/[0.06] bg-navy-900/60">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-semibold text-slate-300">
+          <span>Lihat detail rasio beban</span>
+          <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
+        </summary>
+
+        <div className="space-y-3 border-t border-white/[0.06] px-3 py-3">
+          {load.ratio != null ? (
+            <div>
+              <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-slate-400">
+                <span>Kondisi Beban Tubuh (ACWR)</span>
+                <span className="tabular-nums text-slate-200">Rasio {load.ratio.toFixed(2)}</span>
+              </div>
+
+              <div className="relative py-1.5">
+                <div className="flex h-2 w-full overflow-hidden rounded-full bg-navy-700">
+                  <div className="h-full bg-sky-400/75" style={{ width: '44.44%' }} />
+                  <div className="h-full bg-emerald-400" style={{ width: '27.78%' }} />
+                  <div className="h-full bg-coral/85" style={{ width: '27.78%' }} />
+                </div>
+
+                <div
+                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
+                  style={{ left: `${acwrMarkerPct(load.ratio)}%` }}
+                >
+                  <span className={`block h-3.5 w-3.5 rounded-full border-2 border-navy-900 ring-4 ${meta.pin}`} />
+                </div>
+              </div>
+
+              <div className="relative mt-1 h-4 text-[10px] font-medium tabular-nums text-slate-400" aria-hidden>
+                <span className="absolute left-0">0.0</span>
+                <span className="absolute -translate-x-1/2" style={{ left: '44.44%' }}>0.8</span>
+                <span className="absolute -translate-x-1/2" style={{ left: '72.22%' }}>1.3</span>
+                <span className="absolute right-0">1.8</span>
+              </div>
+              <div className="mt-1 flex justify-between text-[10px] font-medium text-slate-400">
+                <span className="text-sky-300">Ringan</span>
+                <span className="text-emerald-300">Aman</span>
+                <span className="text-coral">Terlalu Berat</span>
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                Membandingkan Poin Usaha (TRIMP) 7 hari terakhir dengan rata-rata mingguan sebelumnya. Rentang 0,8–1,3 berarti Aman.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400">
+              Butuh lebih banyak catatan sesi untuk menghitung rasio beban tubuh (ACWR).
+            </p>
+          )}
+
+          {(ef.improving || drift != null) && (
+            <div className="space-y-1 border-t border-white/[0.06] pt-2 text-xs text-slate-300">
+              {ef.improving && (
+                <div>
+                  Efisiensi Jantung <span className="text-slate-400">(EF)</span>: <strong className="text-emerald-300">Meningkat</strong>
+                </div>
+              )}
+              {drift != null && (
+                <div className="tabular-nums">
+                  Kestabilan detak jantung sesi terakhir: <strong className={driftHigh ? 'text-amber-300' : 'text-slate-200'}>{drift.toFixed(1)}%</strong>{' '}
+                  <span className="text-slate-400">(cardiac drift)</span>
+                </div>
               )}
             </div>
           )}
         </div>
-      </section>
-
-    </div>
+      </details>
+    </section>
   );
 }

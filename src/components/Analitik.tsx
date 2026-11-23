@@ -47,6 +47,20 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+const CALLOUT_STYLE: Record<'good' | 'warn' | 'info', string> = {
+  good: 'border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-100',
+  warn: 'border-amber-400/30 bg-amber-400/[0.08] text-amber-100',
+  info: 'border-sky-400/25 bg-sky-400/[0.08] text-slate-200',
+};
+
+function ChartSummary({ tone = 'info', text }: { tone?: 'good' | 'warn' | 'info'; text: string }) {
+  return (
+    <p className={`mb-2.5 rounded-xl border px-3 py-2 text-xs leading-relaxed ${CALLOUT_STYLE[tone]}`}>
+      {text}
+    </p>
+  );
+}
+
 type View = 'ringkasan' | 'sesi';
 const VIEW_TABS: ReadonlyArray<{ id: View; label: string }> = [
   { id: 'ringkasan', label: 'Ringkasan' },
@@ -175,6 +189,57 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
   const quality = cur.qualitySharePct;
   const pill = INTENSITY_PILL[progress.intensityStatus];
 
+  // ── Kesimpulan bahasa sehari-hari 1 kalimat di atas setiap grafik ────────
+  const acwrChartSummary: { tone: 'good' | 'warn' | 'info'; text: string } =
+    gauge.status === 'sweet_spot'
+      ? { tone: 'good', text: 'Beban latihanmu saat ini berada di zona aman, sehingga tubuh beradaptasi dengan baik tanpa kelelahan berlebih.' }
+      : gauge.status === 'high_fatigue'
+        ? { tone: 'warn', text: 'Beban latihanmu sedang terlalu tinggi—kurangi intensitas atau ambil istirahat agar terhindar dari cedera.' }
+        : gauge.status === 'undertraining'
+          ? { tone: 'info', text: 'Beban latihanmu saat ini tergolong ringan, jadi masih ada ruang untuk menambah durasi lari santai secara bertahap.' }
+          : { tone: 'info', text: 'Catat beberapa sesi lari lagi agar grafik kondisi beban tubuhmu mulai terbentuk.' };
+
+  const paceChartSummary: { tone: 'good' | 'warn' | 'info'; text: string } =
+    !hasPace
+      ? { tone: 'info', text: 'Belum ada sesi lari santai (easy/long run) pada rentang ini untuk melihat tren kecepatan.' }
+      : pd != null && pd <= -3
+        ? { tone: 'good', text: 'Lari santaimu kini lebih cepat dibanding sebelumnya—tanda daya tahan tubuhmu sedang meningkat.' }
+        : pd != null && pd >= 3
+          ? { tone: 'info', text: 'Pace lari santaimu sedikit melambat; ini wajar bila kamu menjaga detak jantung tetap rendah atau saat cuaca panas.' }
+          : { tone: 'info', text: 'Kecepatan lari santaimu terjaga stabil sepanjang periode ini.' };
+
+  const vdotPts = trend.map((p) => p.vdot).filter((v): v is number => v != null);
+  const vdotDelta = vdotPts.length >= 2 ? vdotPts[vdotPts.length - 1] - vdotPts[0] : null;
+  const vdotChartSummary: { tone: 'good' | 'warn' | 'info'; text: string } =
+    !hasVdot
+      ? { tone: 'info', text: 'Catat minimal satu sesi lari 3 km atau lebih untuk melihat perkembangan skor kebugaranmu.' }
+      : vdotDelta == null
+        ? { tone: 'info', text: 'Baru ada 1 sesi di atas 3 km; tambah beberapa sesi lagi untuk melihat apakah kebugaranmu sedang naik.' }
+        : vdotDelta >= 0.5
+          ? { tone: 'good', text: 'Kebugaran larimu sedang meningkat—tubuhmu mampu berlari lebih cepat dengan jarak yang sama.' }
+          : vdotDelta <= -0.5
+            ? { tone: 'info', text: 'Angka terlihat turun karena kamu lebih banyak lari santai akhir-akhir ini, bukan berarti kebugaranmu menurun.' }
+            : { tone: 'info', text: 'Skor kebugaran larimu terjaga konsisten sepanjang periode ini.' };
+
+  const efChartSummary: { tone: 'good' | 'warn' | 'info'; text: string } =
+    efData.length === 0
+      ? { tone: 'info', text: 'Lari santai dengan sensor detak jantung dibutuhkan agar efisiensi jantungmu bisa dipantau.' }
+      : ed != null && ed >= 2
+        ? { tone: 'good', text: 'Efisiensi jantungmu membaik—kamu bisa berlari sama cepat atau lebih cepat dengan detak jantung lebih hemat.' }
+        : ed != null && ed <= -3
+          ? { tone: 'warn', text: 'Jantung bekerja sedikit lebih keras dari biasanya, kemungkinan karena kurang pulih, kurang tidur, atau cuaca panas.' }
+          : { tone: 'info', text: 'Efisiensi jantungmu stabil, menandakan tubuhmu beradaptasi dengan baik pada porsi latihan sekarang.' };
+
+  const kmDelta = progress.kmDeltaPct;
+  const weeklyChartSummary: { tone: 'good' | 'warn' | 'info'; text: string } =
+    weekly.every((w) => w.km === 0)
+      ? { tone: 'info', text: 'Belum ada jarak lari yang tercatat pada rentang waktu ini.' }
+      : kmDelta != null && kmDelta >= 15
+        ? { tone: 'warn', text: 'Total jarak mingguanmu naik cukup cepat—pastikan tetap menyelipkan hari santai agar otot dan sendi tidak kaget.' }
+        : kmDelta != null && kmDelta <= -15
+          ? { tone: 'info', text: 'Jarak mingguanmu sedang lebih ringan dari periode lalu, bagus untuk memberi waktu tubuh memulihkan tenaga.' }
+          : { tone: 'good', text: 'Total jarak lari mingguanmu berjalan konsisten, kebiasaan baik untuk membangun daya tahan jangka panjang.' };
+
   return (
     <div className="space-y-4">
       <ScreenHeader title="Analitik" subtitle="Perkembangan kebugaran & beban latihan" />
@@ -222,7 +287,7 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             <div className="mt-3 grid grid-cols-2 gap-3">
               <KpiTile label="Jarak periode" value={dec(cur.totalKm)} unit="km" context={kmNote} tone="info" />
               <KpiTile label="Pace lari santai" value={cur.easyAvgPaceSec != null ? fmtPace(cur.easyAvgPaceSec) : '–'} unit="/km" context={paceNote} tone={paceTone} />
-              <KpiTile label="Efisiensi aerobik" term="EF" value={cur.avgEf != null ? dec(cur.avgEf, 2) : '–'} context={efNote} tone={efTone} />
+              <KpiTile label="Efisiensi jantung" term="EF" value={cur.avgEf != null ? dec(cur.avgEf, 2) : '–'} context={efNote} tone={efTone} />
               <KpiTile label="Kadens langkah" value={cur.avgCadence != null ? Math.round(cur.avgCadence) : '–'} unit="spm" context={driftNote} tone={driftTone} />
             </div>
             {real.length > 0 && (
@@ -232,8 +297,8 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
               </p>
             )}
             <p className="mt-2 text-xs text-slate-400">
-              Efisiensi aerobik (EF) = kecepatan per detak jantung; makin tinggi, tubuh makin hemat.
-              Pergeseran detak jantung (cardiac drift) di atas 5% berarti HR terus naik pada pace yang sama.
+              Efisiensi jantung (EF) mengukur seberapa cepat kamu berlari tiap detak jantung—makin tinggi, tubuh makin hemat energi.
+              Pergeseran detak jantung (cardiac drift) di atas 5% berarti detak jantung terus naik walau kecepatanmu tetap sama.
             </p>
             <p className="mt-1 text-xs text-slate-400">
               Pace lari santai = rata-rata seluruh sesi easy dan long run pada periode ini, tanpa filter batas detak jantung MAF. Di mode MAF, pace pada detak jantung yang sama ada di kartu Zona MAF.
@@ -257,15 +322,16 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
         </>
       )}
 
-      {/* Kartu 3 — Rasio Beban */}
-      <Card title="Rasio beban (ACWR)">
+      {/* Kartu 3 — Kondisi Beban Tubuh */}
+      <Card title="Kondisi beban tubuh (ACWR)">
         <AcwrGauge ratio={gauge.ratio} status={gauge.status} />
         <p className="mt-2 text-center text-sm tabular-nums text-slate-400">
-          Beban 7 hari {Math.round(gauge.acute)} · Rata-rata mingguan sebelumnya {Math.round(gauge.chronicWeekly)}
+          Poin Usaha 7 hari {Math.round(gauge.acute)} · Rata-rata mingguan sebelumnya {Math.round(gauge.chronicWeekly)}
         </p>
-        <p className="mt-1 text-center text-xs text-slate-400">Rasio antara 0,8 dan 1,3 dianggap aman. Di bawah 0,8 beban terlalu ringan; di atas 1,3 terlalu berat.</p>
+        <p className="mt-1 text-center text-xs text-slate-400">Rentang 0,8–1,3 berarti Aman. Di bawah 0,8 beban ringan; di atas 1,3 terlalu berat.</p>
         {hasSessions && (
           <div className="mt-3">
+            <ChartSummary tone={acwrChartSummary.tone} text={acwrChartSummary.text} />
             <ResponsiveContainer width="100%" height={180}>
               <LineChart data={acwrData}>
                 <CartesianGrid stroke="#243456" vertical={false} />
@@ -283,9 +349,10 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
 
       {hasSessions && (
         <>
-          {/* Kartu 4 — Tren Pace Santai & VDOT */}
-          <Card title="Tren pace lari santai & skor kebugaran (VDOT)">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Pace lari santai (menit/km)</h3>
+          {/* Kartu 4 — Tren Pace Santai & Skor Kebugaran Lari */}
+          <Card title="Tren pace lari santai & skor kebugaran lari">
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Pace lari santai (menit/km)</h3>
+            <ChartSummary tone={paceChartSummary.tone} text={paceChartSummary.text} />
             {hasPace ? (
               <>
                 <ResponsiveContainer width="100%" height={170}>
@@ -302,7 +369,8 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             ) : (
               <p className="mt-1 text-sm text-slate-400">Belum ada sesi easy atau long run dalam rentang ini.</p>
             )}
-            <h3 className="mt-4 text-xs font-bold uppercase tracking-wider text-slate-400">Skor kebugaran <span className="font-medium normal-case tracking-normal">(VDOT)</span></h3>
+            <h3 className="mb-2 mt-4 text-xs font-bold uppercase tracking-wider text-slate-400">Skor kebugaran lari <span className="font-medium normal-case tracking-normal">(VDOT)</span></h3>
+            <ChartSummary tone={vdotChartSummary.tone} text={vdotChartSummary.text} />
             {hasVdot ? (
               <>
                 <ResponsiveContainer width="100%" height={170}>
@@ -310,7 +378,7 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
                     <CartesianGrid stroke="#243456" vertical={false} />
                     <XAxis dataKey="d" {...axis} minTickGap={24} />
                     <YAxis {...axis} width={32} domain={['auto', 'auto']} />
-                    <Tooltip {...tip} formatter={(v) => [dec(Number(v)), 'VDOT']} />
+                    <Tooltip {...tip} formatter={(v) => [dec(Number(v)), 'Skor Kebugaran (VDOT)']} />
                     <Line dataKey="vdot" stroke="#ff6b5e" dot={{ r: 3 }} connectNulls strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -323,7 +391,8 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             )}
           </Card>
 
-          <Card title={`Efisiensi aerobik (EF) · ${days} hari`}>
+          <Card title={`Efisiensi jantung (EF) · ${days} hari`}>
+            <ChartSummary tone={efChartSummary.tone} text={efChartSummary.text} />
             {efData.length === 0 ? (
               <p className="text-sm text-slate-400">Belum ada sesi easy atau long run dalam rentang ini.</p>
             ) : (
@@ -340,6 +409,7 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
           </Card>
 
           <Card title="Volume mingguan (km)">
+            <ChartSummary tone={weeklyChartSummary.tone} text={weeklyChartSummary.text} />
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={weekly}>
                 <CartesianGrid stroke="#243456" vertical={false} />
@@ -374,7 +444,10 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
       {/* Kartu 6 — Zona Pace & Prediksi Lomba */}
       {vd != null && <ZonaPaceCard vdot={vd} maxHr={maxHr} />}
 
-      <Card title="Prediksi waktu lomba (Riegel)">
+      <Card title="Perkiraan waktu lomba (Riegel)">
+        <p className="mb-2 text-xs text-slate-400">
+          Estimasi waktu finis tiap jarak lomba berdasarkan kecepatan terbaikmu belakangan ini dan kecukupan jarak latihanmu.
+        </p>
         <div className="divide-y divide-navy-700 tabular-nums">
           {dists.map((d) => {
             const p = preds[d];

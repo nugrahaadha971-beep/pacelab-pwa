@@ -19,7 +19,12 @@ const PROGRAM_TABS: ReadonlyArray<{ id: ProgramTab; label: string }> = [
   { id: 'jadwal', label: 'Jadwal' },
 ];
 const card = 'sport-card p-4';
-const MODE_PILLS: Array<[PlanMode, string]> = [['auto', 'Otomatis'], ['progressive5k', 'Progresif 5K'], ['nike5k', 'Nike 5K'], ['maf', 'MAF']];
+const MODE_OPTIONS: ReadonlyArray<{ id: PlanMode; label: string; desc: string }> = [
+  { id: 'auto', label: 'Otomatis', desc: 'Dipilihkan sistem sesuai kondisi lari terakhirmu.' },
+  { id: 'progressive5k', label: 'Progresif 5K', desc: 'Kombinasi lari-jalan bertahap, paling aman untuk pemula.' },
+  { id: 'nike5k', label: 'Nike 5K', desc: 'Lari terus-menerus berdasarkan target kecepatan.' },
+  { id: 'maf', label: 'MAF', desc: 'Fokus menjaga detak jantung tetap rendah & nyaman.' },
+];
 
 /** Bar progres dengan semantik progressbar; hijau bila sudah memenuhi syarat. */
 function Meter({ label, ratio }: { label: string; ratio: number }) {
@@ -93,7 +98,7 @@ export default function Program({ profile, workouts, onProfileChange }: { profil
           <div className="grid grid-cols-2 gap-3">
             <KpiTile label="Target waktu" value={fmtHms(profile.targetTimeSec)} tone="neutral" />
             <KpiTile label="Pace dibutuhkan" value={fmtPace(goalPace)} unit="/km" tone="neutral" />
-            <KpiTile label="Prediksi saat ini" term="Riegel" value={pred ? fmtHms(pred.finalSec) : '–'} tone="neutral" />
+            <KpiTile label="Perkiraan waktu saat ini" term="Riegel" value={pred ? fmtHms(pred.finalSec) : '–'} tone="neutral" />
             <KpiTile
               label="Selisih ke target"
               value={gap == null ? '–' : gap > 0 ? `+${fmtHms(gap)}` : `−${fmtHms(-gap)}`}
@@ -123,15 +128,28 @@ export default function Program({ profile, workouts, onProfileChange }: { profil
             {mode !== 'auto' && curriculum !== selection.plan && (
               <p className="mt-1 text-xs text-amber-400">Rekomendasi otomatis saat ini: {PLAN_LABEL[selection.plan]}.</p>
             )}
-            <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="Pilih program latihan">
-              {MODE_PILLS.map(([m, label]) => (
-                <button key={m} type="button" aria-pressed={mode === m} onClick={() => chooseMode(m)}
-                  className={`min-h-[44px] rounded-xl px-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
-                    mode === m ? 'bg-coral text-navy-950' : 'border border-navy-600 text-slate-300'
-                  }`}>
-                  {label}
-                </button>
-              ))}
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label="Pilih metode latihan">
+              {MODE_OPTIONS.map((opt) => {
+                const active = mode === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => chooseMode(opt.id)}
+                    className={`flex min-h-[56px] flex-col items-start justify-center rounded-xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
+                      active
+                        ? 'border-coral/70 bg-coral/15 text-orange-100'
+                        : 'border-navy-600 bg-navy-900/50 text-slate-200 hover:border-navy-500'
+                    }`}
+                  >
+                    <span className="text-sm font-bold">{opt.label}</span>
+                    <span className={`mt-0.5 text-xs leading-snug ${active ? 'text-orange-200/90' : 'text-slate-400'}`}>
+                      {opt.desc}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-300">
               {selection.reasons.map((r, i) => <li key={i}>{r}</li>)}

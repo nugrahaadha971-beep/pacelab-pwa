@@ -9,9 +9,12 @@ import { parseDuration } from '../parsers/manual';
 import { todayStr } from './format';
 import { Field, PrimaryButton, SegmentedTabs } from './ui';
 
-const TYPES: { id: WorkoutType; label: string }[] = [
-  { id: 'easy', label: 'Easy' }, { id: 'tempo', label: 'Tempo' }, { id: 'interval', label: 'Interval' },
-  { id: 'long_run', label: 'Long run' }, { id: 'race', label: 'Race' },
+const TYPES: { id: WorkoutType; label: string; desc: string }[] = [
+  { id: 'easy', label: 'Easy', desc: 'Santai, masih bisa ngobrol' },
+  { id: 'long_run', label: 'Long run', desc: 'Jarak jauh santai' },
+  { id: 'tempo', label: 'Tempo', desc: 'Cepat stabil' },
+  { id: 'interval', label: 'Interval', desc: 'Lari cepat diselingi jalan' },
+  { id: 'race', label: 'Race', desc: 'Lomba' },
 ];
 const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 /** Jeda sebelum sheet menutup otomatis setelah berhasil menyimpan. */
@@ -22,21 +25,39 @@ interface Msg { text: string; ok: boolean }
 interface Errs { date?: string; duration?: string; distance?: string; rpe?: string }
 
 const chip = (on: boolean) =>
-  `min-h-11 rounded-full border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
-    on ? 'border-coral/60 bg-coral/20 text-orange-200' : 'border-navy-700 bg-navy-800 text-slate-300'
+  `flex min-h-11 flex-col items-start justify-center rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral ${
+    on ? 'border-coral/70 bg-coral/15 text-orange-100' : 'border-navy-700 bg-navy-800 text-slate-200'
   }`;
 
-/** Pilihan jenis sesi sebagai chip (satu pilihan). */
+function rpeFeedback(v: number): { title: string; tone: string } {
+  if (v <= 3) return { title: '1–3: Sangat ringan', tone: 'border-sky-400/30 bg-sky-400/10 text-sky-300' };
+  if (v <= 6) return { title: '4–6: Sedang & nyaman', tone: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300' };
+  if (v <= 8) return { title: '7–8: Berat', tone: 'border-amber-400/30 bg-amber-400/10 text-amber-300' };
+  return { title: '9–10: Maksimal', tone: 'border-coral/30 bg-coral/10 text-coral' };
+}
+
+/** Pilihan jenis sesi dengan sub-label ramah pemula (satu pilihan). */
 function TypePicker({ value, onChange }: { value: WorkoutType; onChange: (t: WorkoutType) => void }) {
   return (
     <div>
-      <div className="text-sm font-semibold text-slate-200">Jenis sesi</div>
-      <div role="radiogroup" aria-label="Jenis sesi" className="mt-1 flex flex-wrap gap-2">
-        {TYPES.map((t) => (
-          <button key={t.id} type="button" role="radio" aria-checked={value === t.id} onClick={() => onChange(t.id)} className={chip(value === t.id)}>
-            {t.label}
-          </button>
-        ))}
+      <div className="text-sm font-semibold text-slate-200">Jenis lari</div>
+      <div role="radiogroup" aria-label="Jenis lari" className="mt-1.5 grid grid-cols-2 gap-2">
+        {TYPES.map((t, idx) => {
+          const on = value === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => onChange(t.id)}
+              className={`${chip(on)} ${idx === TYPES.length - 1 ? 'col-span-2' : ''}`}
+            >
+              <span className="text-sm font-bold">{t.label}</span>
+              <span className={`text-[11px] leading-snug ${on ? 'text-orange-200/85' : 'text-slate-400'}`}>{t.desc}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -57,12 +78,13 @@ const CATAT_TABS = [
 
 /** Skala 1–10 yang bisa diketuk. Ketuk angka terpilih sekali lagi untuk mengosongkan. */
 function RpeScale({ value, onChange, error, hint, warn }: { value: number | null; onChange: (v: number | null) => void; error?: string; hint?: string; warn?: string }) {
+  const feedback = value != null ? rpeFeedback(value) : null;
   return (
     <div>
       <div className="text-sm font-semibold text-slate-200">
         Seberapa berat rasanya? <span className="font-normal text-slate-400">(RPE)</span>
       </div>
-      <div role="radiogroup" aria-label="Tingkat berat sesi, 1 sampai 10" className={`mt-1 grid grid-cols-5 gap-2 ${warn ? 'rounded-2xl p-1.5 ring-2 ring-amber-400/70' : ''}`}>
+      <div role="radiogroup" aria-label="Tingkat berat sesi, 1 sampai 10" className={`mt-1.5 grid grid-cols-5 gap-2 ${warn ? 'rounded-2xl p-1.5 ring-2 ring-amber-400/70' : ''}`}>
         {RPE_VALUES.map((n) => {
           const on = value === n;
           return (
@@ -75,7 +97,16 @@ function RpeScale({ value, onChange, error, hint, warn }: { value: number | null
           );
         })}
       </div>
-      <div className="mt-1 flex justify-between text-xs text-slate-400"><span>1 = sangat ringan</span><span>10 = tenaga maksimal</span></div>
+      {feedback ? (
+        <div className={`mt-2 rounded-xl border px-3 py-2 text-xs font-semibold ${feedback.tone}`} aria-live="polite">
+          Tingkat kelelahan: {feedback.title}
+        </div>
+      ) : (
+        <div className="mt-1.5 flex justify-between text-xs text-slate-400">
+          <span>1–3: Sangat ringan</span>
+          <span>9–10: Maksimal</span>
+        </div>
+      )}
       {error ? <p role="alert" className="mt-1 text-xs text-coral">{error}</p> : warn ? <p role="alert" className="mt-1 text-xs font-semibold text-amber-300">{warn}</p> : hint ? <p className="mt-1 text-xs text-slate-400">{hint}</p> : null}
     </div>
   );
@@ -126,7 +157,7 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
       const parsed = /\.fit$/i.test(file.name) ? parseFit(await file.arrayBuffer()) : parseGpx(await file.text());
       if (parsed.avgHr == null && impRpe == null) {
         setImpWarn(true);
-        return fail('File ini tidak punya data detak jantung. Pilih tingkat berat (RPE) di atas, lalu pilih berkas lagi agar beban latihan bisa dihitung.');
+        return fail('File ini tidak punya data detak jantung. Pilih tingkat kelelahan (RPE) di atas, lalu pilih berkas lagi agar Poin Usaha bisa dihitung.');
       }
       if (isDuplicate(await db.workouts.toArray(), parsed)) {
         return fail('Sesi ini sudah ada (waktu dan jarak sama). Impor dilewati.');
@@ -167,7 +198,7 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
       return fail(err instanceof Error ? err.message : 'Gagal menyimpan sesi.');
     }
     setDuration(''); setDistance(''); setRpe(null); setDate(todayStr());
-    setMsg({ text: 'Sesi tersimpan. Beban 7 hari diperbarui.', ok: true });
+    setMsg({ text: 'Sesi tersimpan. Poin Usaha 7 hari diperbarui.', ok: true });
     onSaved();
   };
 
