@@ -224,6 +224,7 @@ export interface RequestAiCoachOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   isOnline?: boolean;
+  retryDelayMs?: number;
 }
 
 interface GeminiApiErrorBody {
@@ -255,6 +256,13 @@ interface GeminiModelsListResponse {
   models?: GeminiModelInfo[];
 }
 
+const RETRY_503_DELAY_MS = 1500;
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function modelEndpoint(model: string): string {
   return `${GEMINI_API_BASE}/${normalizeModelName(model)}:generateContent`;
 }
@@ -264,14 +272,29 @@ function modelVersionScore(name: string): number {
   return m ? Number(m[1]) : 0;
 }
 
+function isMediaOnlyModel(lowerName: string): boolean {
+  return (
+    lowerName.includes('tts') ||
+    lowerName.includes('image') ||
+    lowerName.includes('audio') ||
+    lowerName.includes('live') ||
+    lowerName.includes('transcribe')
+  );
+}
+
 function modelPriorityScore(rawName: string): number {
-  const n = rawName.toLowerCase();
-  let score = modelVersionScore(n) * 100;
-  if (!n.includes('exp') && !n.includes('thinking')) score += 20;
-  if (!n.includes('preview')) score += 5;
-  if (!n.includes('lite')) score += 3;
-  if (n.includes('tts') || n.includes('image') || n.includes('audio') || n.includes('live')) score -= 1000;
-  return score;
+  const n = normalizeModelName(rawName).toLowerCase();
+  if (n === DEFAULT_GEMINI_MODEL) return 400_000;
+  const ver = modelVersionScore(n) * 100;
+  const stability = (!n.includes('exp') && !n.includes('thinking') ? 20 : 0) + (!n.includes('preview') ? 5 : 0);
+  if (n.includes('flash') && !n.includes('flash-lite')) return 300_000 + ver + stability;
+  if (n.includes('flash-lite')) return 200_000 + ver + stability;
+  if (n.includes('pro')) return 100_000 + ver + stability;
+  return 0;
+}
+
+function isFallbackStatus(status: number): boolean {
+  return status === 503 || status === 429 || status === 404;
 }
 
 async function callGenerateContent(
@@ -299,11 +322,26 @@ async function callGenerateContent(
   }
 }
 
-async function findFallbackFlashModel(
+async function attemptModel(
+  fetchFn: typeof fetch,
+  model: string,
+  apiKey: string,
+  prompt: string,
+  retryDelayMs: number,
+): Promise<Response> {
+  let res = await callGenerateContent(fetchFn, model, apiKey, prompt);
+  if (res.status === 503) {
+    await sleep(retryDelayMs);
+    res = await callGenerateContent(fetchFn, model, apiKey, prompt);
+  }
+  return res;
+}
+
+async function findFallbackCandidates(
   fetchFn: typeof fetch,
   apiKey: string,
   excludeModel?: string,
-): Promise<string | null> {
+): Promise<string[]> {
   let listRes: Response;
   try {
     listRes = await fetchFn(GEMINI_API_BASE, {
@@ -313,13 +351,14 @@ async function findFallbackFlashModel(
       },
     });
   } catch {
-    return null;
+    return [];
   }
 
-  if (!listRes.ok) return null;
+  if (!listRes.ok) return [];
   const data = (await listRes.json().catch(() => null)) as GeminiModelsListResponse | null;
   const models = data?.models ?? [];
   const excluded = excludeModel ? normalizeModelName(excludeModel).toLowerCase() : '';
+  const seen = new Set<string>(excluded ? [excluded] : []);
 
   const candidates = models
     .map((m) => ({
@@ -328,19 +367,20 @@ async function findFallbackFlashModel(
     }))
     .filter((m) => {
       const lower = m.clean.toLowerCase();
-      return (
-        Boolean(m.clean) &&
-        lower !== excluded &&
-        m.methods.includes('generateContent') &&
-        lower.includes('flash')
-      );
+      if (!m.clean || seen.has(lower)) return false;
+      if (!m.methods.includes('generateContent')) return false;
+      if (isMediaOnlyModel(lower)) return false;
+      if (!lower.includes('flash') && !lower.includes('pro')) return false;
+      seen.add(lower);
+      return true;
     })
     .sort((a, b) => {
       const diff = modelPriorityScore(b.clean) - modelPriorityScore(a.clean);
       return diff !== 0 ? diff : b.clean.localeCompare(a.clean);
-    });
+    })
+    .map((m) => m.clean);
 
-  return candidates[0]?.clean ?? null;
+  return candidates;
 }
 
 export async function requestAiCoachAnalysis(
@@ -365,16 +405,24 @@ export async function requestAiCoachAnalysis(
   }
 
   const fetchFn = opts.fetchImpl ?? fetch;
+  const retryDelayMs = opts.retryDelayMs ?? RETRY_503_DELAY_MS;
   const prompt = buildAiCoachPrompt(ctx);
   const activeModel = loadGeminiModel();
 
-  let res = await callGenerateContent(fetchFn, activeModel, apiKey, prompt);
-
-  if (res.status === 404) {
-    const fallbackModel = await findFallbackFlashModel(fetchFn, apiKey, activeModel);
-    if (fallbackModel) {
-      res = await callGenerateContent(fetchFn, fallbackModel, apiKey, prompt);
-      if (res.ok) saveGeminiModel(fallbackModel);
+  let res = await attemptModel(fetchFn, activeModel, apiKey, prompt, retryDelayMs);
+  if (res.ok) {
+    saveGeminiModel(activeModel);
+  } else if (isFallbackStatus(res.status)) {
+    const candidates = await findFallbackCandidates(fetchFn, apiKey, activeModel);
+    for (const candidate of candidates) {
+      res = await attemptModel(fetchFn, candidate, apiKey, prompt, retryDelayMs);
+      if (res.ok) {
+        saveGeminiModel(candidate);
+        break;
+      }
+      if (!isFallbackStatus(res.status)) {
+        break;
+      }
     }
   }
 
