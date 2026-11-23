@@ -11,10 +11,18 @@ export const GEMINI_API_KEY_STORAGE_KEY = 'pacelab_gemini_api_key';
 export const GEMINI_MODEL_STORAGE_KEY = 'pacelab_gemini_model';
 export const AI_COACH_CACHE_STORAGE_KEY = 'pacelab_ai_coach_cache';
 export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash-lite';
-export const FALLBACK_GEMINI_MODEL = 'gemini-3.8-flash';
+export const GEMINI_MODEL_PRIORITY: readonly string[] = [
+  'gemini-3.8-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-2.5-flash',
+];
+export const DEFAULT_GEMINI_MODEL = GEMINI_MODEL_PRIORITY[0];
+export const FALLBACK_GEMINI_MODEL = GEMINI_MODEL_PRIORITY[1];
 export const GEMINI_ENDPOINT = `${GEMINI_API_BASE}/${DEFAULT_GEMINI_MODEL}:generateContent`;
 export const REQUEST_TIMEOUT_MS = 10_000;
+const ALL_429_MESSAGE =
+  'Kuota gratis harian semua model Gemini untuk API key ini sedang habis. Coba lagi dalam beberapa jam atau ganti API key dari project Google Cloud lain di tab Profil.';
 
 const WORKOUT_TYPE_ID: Record<WorkoutType, string> = {
   easy: 'Easy Run',
@@ -257,14 +265,93 @@ interface GeminiGenerateResponse {
   };
 }
 
-const MODEL_CHAIN: readonly string[] = [DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODEL];
+interface GeminiModelInfo {
+  name?: string;
+  supportedGenerationMethods?: string[];
+}
+
+interface GeminiModelsListResponse {
+  models?: GeminiModelInfo[];
+}
 
 function modelEndpoint(model: string): string {
   return `${GEMINI_API_BASE}/${normalizeModelName(model)}:generateContent`;
 }
 
 function isFallbackStatus(status: number): boolean {
-  return status === 503 || status === 429 || status === 404;
+  return status === 429 || status === 503 || status === 404;
+}
+
+function isMediaOnlyModel(lowerName: string): boolean {
+  return (
+    lowerName.includes('tts') ||
+    lowerName.includes('image') ||
+    lowerName.includes('audio') ||
+    lowerName.includes('live') ||
+    lowerName.includes('transcribe')
+  );
+}
+
+function modelVersionScore(name: string): number {
+  const m = /gemini-(\d+(?:\.\d+)?)/.exec(name);
+  return m ? Number(m[1]) : 0;
+}
+
+function discoveredModelScore(rawName: string): number {
+  const n = normalizeModelName(rawName).toLowerCase();
+  const ver = modelVersionScore(n) * 100;
+  const stability = (!n.includes('exp') && !n.includes('thinking') ? 20 : 0) + (!n.includes('preview') ? 5 : 0);
+  if (n.includes('flash-lite')) return 300_000 + ver + stability;
+  if (n.includes('flash')) return 200_000 + ver + stability;
+  if (n.includes('pro')) return 100_000 + ver + stability;
+  return 0;
+}
+
+async function fetchActiveModels(
+  fetchFn: typeof fetch,
+  apiKey: string,
+  excludeLower: ReadonlySet<string>,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<string[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let listRes: Response;
+  try {
+    listRes = await fetchFn(GEMINI_API_BASE, {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': apiKey,
+      },
+      signal: controller.signal,
+    });
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!listRes.ok) return [];
+  const data = (await listRes.json().catch(() => null)) as GeminiModelsListResponse | null;
+  const seen = new Set<string>(excludeLower);
+  return (data?.models ?? [])
+    .map((m) => ({
+      clean: normalizeModelName(m.name ?? ''),
+      methods: m.supportedGenerationMethods ?? [],
+    }))
+    .filter((m) => {
+      const lower = m.clean.toLowerCase();
+      if (!m.clean || seen.has(lower)) return false;
+      if (!m.methods.includes('generateContent')) return false;
+      if (isMediaOnlyModel(lower)) return false;
+      if (!lower.includes('flash') && !lower.includes('pro')) return false;
+      seen.add(lower);
+      return true;
+    })
+    .sort((a, b) => {
+      const diff = discoveredModelScore(b.clean) - discoveredModelScore(a.clean);
+      return diff !== 0 ? diff : b.clean.localeCompare(a.clean);
+    })
+    .map((m) => m.clean);
 }
 
 async function callGenerateContent(
@@ -408,25 +495,46 @@ async function callGeminiText(
 
   let res: Response | null = null;
   let lastTimeoutErr: AiCoachError | null = null;
+  const triedLower = new Set<string>();
+  const attemptStatuses: number[] = [];
+  let stopEarly = false;
 
-  for (const model of MODEL_CHAIN) {
-    try {
-      const attempt = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig, timeoutMs);
-      res = attempt;
-      if (attempt.ok) {
-        saveGeminiModel(model);
-        break;
+  const tryCandidates = async (models: readonly string[]) => {
+    for (const rawModel of models) {
+      const model = normalizeModelName(rawModel);
+      const lower = model.toLowerCase();
+      if (!model || triedLower.has(lower)) continue;
+      triedLower.add(lower);
+
+      try {
+        const attempt = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig, timeoutMs);
+        res = attempt;
+        attemptStatuses.push(attempt.status);
+        if (attempt.ok) {
+          saveGeminiModel(model);
+          stopEarly = true;
+          return;
+        }
+        if (!isFallbackStatus(attempt.status)) {
+          stopEarly = true;
+          return;
+        }
+      } catch (err) {
+        if (err instanceof AiCoachError && err.code === 'timeout') {
+          lastTimeoutErr = err;
+          res = null;
+          continue;
+        }
+        throw err;
       }
-      if (!isFallbackStatus(attempt.status)) {
-        break;
-      }
-    } catch (err) {
-      if (err instanceof AiCoachError && err.code === 'timeout') {
-        lastTimeoutErr = err;
-        res = null;
-        continue;
-      }
-      throw err;
+    }
+  };
+
+  await tryCandidates(GEMINI_MODEL_PRIORITY);
+  if (!stopEarly) {
+    const activeModels = await fetchActiveModels(fetchFn, apiKey, triedLower, timeoutMs);
+    if (activeModels.length > 0) {
+      await tryCandidates(activeModels);
     }
   }
 
@@ -437,8 +545,9 @@ async function callGeminiText(
     );
   }
 
-  if (!res.ok) {
-    const rawText = await res.text().catch(() => '');
+  const finalRes: Response = res;
+  if (!finalRes.ok) {
+    const rawText = await finalRes.text().catch(() => '');
     if (rawText.includes('PROXY_GENERATION_DISABLED')) {
       throw new AiCoachError(
         'proxy_disabled',
@@ -455,30 +564,35 @@ async function callGeminiText(
     const apiMessage = errData?.error?.message?.trim() ?? '';
     const statusText = errData?.error?.status ?? '';
 
-    if (res.status === 429 || statusText === 'RESOURCE_EXHAUSTED') {
+    if (finalRes.status === 429 || statusText === 'RESOURCE_EXHAUSTED') {
+      const exhaustedBy429 =
+        attemptStatuses.some((s) => s === 429) &&
+        attemptStatuses.every((s) => s === 429 || s === 404);
       throw new AiCoachError(
         'quota_exceeded',
-        apiMessage
-          ? `Gemini (429): ${apiMessage}`
-          : 'Kuota API Gemini habis atau batas permintaan tercapai (429). Coba lagi nanti atau periksa kuota akun Google AI Anda.',
+        exhaustedBy429
+          ? ALL_429_MESSAGE
+          : apiMessage
+            ? `Gemini (429): ${apiMessage}`
+            : ALL_429_MESSAGE,
       );
     }
 
     if (
-      res.status === 401 ||
-      res.status === 403 ||
+      finalRes.status === 401 ||
+      finalRes.status === 403 ||
       statusText === 'PERMISSION_DENIED' ||
-      (res.status === 400 && /api[_ ]?key|key not valid|invalid.*key/i.test(apiMessage))
+      (finalRes.status === 400 && /api[_ ]?key|key not valid|invalid.*key/i.test(apiMessage))
     ) {
       throw new AiCoachError(
         'invalid_key',
         apiMessage
-          ? `Gemini (${res.status}): ${apiMessage}`
-          : `API Key Gemini tidak valid atau ditolak (${res.status}). Periksa kembali key Anda di tab Profil.`,
+          ? `Gemini (${finalRes.status}): ${apiMessage}`
+          : `API Key Gemini tidak valid atau ditolak (${finalRes.status}). Periksa kembali key Anda di tab Profil.`,
       );
     }
 
-    if (res.status === 400) {
+    if (finalRes.status === 400) {
       throw new AiCoachError(
         'bad_request',
         apiMessage ? `Gemini (400): ${apiMessage}` : 'Permintaan ke Gemini tidak valid (400).',
@@ -488,14 +602,14 @@ async function callGeminiText(
     throw new AiCoachError(
       'api_error',
       apiMessage
-        ? `Gemini (${res.status}): ${apiMessage}`
+        ? `Gemini (${finalRes.status}): ${apiMessage}`
         : rawText.trim()
-          ? `Gemini (${res.status}): ${rawText.trim()}`
-          : `Layanan Gemini mengalami gangguan (${res.status}). Silakan coba lagi nanti.`,
+          ? `Gemini (${finalRes.status}): ${rawText.trim()}`
+          : `Layanan Gemini mengalami gangguan (${finalRes.status}). Silakan coba lagi nanti.`,
     );
   }
 
-  const data = (await res.json().catch(() => null)) as GeminiGenerateResponse | null;
+  const data = (await finalRes.json().catch(() => null)) as GeminiGenerateResponse | null;
   const parts = data?.candidates?.[0]?.content?.parts ?? [];
   const text = parts
     .map((p) => (typeof p.text === 'string' ? p.text : ''))
