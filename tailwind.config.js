@@ -4,13 +4,19 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ['"Space Grotesk"', 'sans-serif'],
+        display: ['"Plus Jakarta Sans"', '"Space Grotesk"', 'sans-serif'],
         sans: ['"DM Sans"', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'monospace'],
       },
       colors: {
-        navy: { 950: '#070709', 900: '#070709', 800: '#111216', 700: '#191B22', 600: '#272A35' },
-        volt: '#C8FF00',
+        navy: {
+          950: '#09090B',
+          900: '#09090B',
+          800: '#121215',
+          700: '#18181D',
+          600: '#27272E',
+        },
+        volt: '#BEF264',
         coral: '#FF4D2D',
       },
     },

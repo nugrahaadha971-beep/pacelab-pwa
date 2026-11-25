@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 html, body, #root {
-  background: #070709;
-  color: #f4f5f7;
+  background: #09090B;
+  color: #f4f4f5;
 }
 html { -webkit-tap-highlight-color: transparent; }
 body {
@@ -13,7 +13,7 @@ body {
   font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
 }
 h1, h2, h3 {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Space Grotesk', sans-serif;
   letter-spacing: -0.02em;
 }
 
@@ -29,12 +29,21 @@ h1, h2, h3 {
 
 @layer components {
   .sport-card {
-    @apply rounded-3xl bg-[#111216];
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    @apply rounded-3xl bg-[#121215];
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
   .sport-subcard {
-    @apply rounded-2xl bg-[#191B22];
+    @apply rounded-2xl bg-[#18181D];
     border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -57,4 +66,3 @@ h1, h2, h3 {
     background-position: -200% 0;
   }
 }
-

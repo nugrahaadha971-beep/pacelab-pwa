@@ -1,0 +1,8 @@
+{
+  "name": "PACELAB",
+  "description": "Analitik lari, pemantauan beban latihan (ACWR), program latihan adaptif, dan analisa D-Day lomba berbasis PWA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

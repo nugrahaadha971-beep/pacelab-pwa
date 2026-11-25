@@ -1,8 +1,21 @@
 import { useState, type ReactNode } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { BarChart3, ChevronDown, TrendingUp } from 'lucide-react';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceArea,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type { RaceDistance, UserProfile, Workout } from '../analytics/types';
-import { acwr, DAY_MS, efficiencyFactor, type AcwrStatus } from '../analytics/workload';
+import { acwr, DAY_MS, efficiencyFactor, tanakaMaxHr, type AcwrStatus } from '../analytics/workload';
 import { currentVdot, PENALTY_RULES, predictAll, RACE_KM, velocityFor, ZONE_FRACTION } from '../analytics/predictor';
 import { compareProgress } from '../analytics/progressSummary';
 import { analyzeWorkoutPeriod } from '../analytics/sessionAnalysis';
@@ -18,22 +31,14 @@ import { fmtHms, todayStr } from './format';
 import { weeklyKm } from './historyFilter';
 import AcwrGauge from './AcwrGauge';
 import { ZonaPaceCard } from './CoachCard';
-import { KpiTile, ScreenHeader, SegmentedTabs, StatusPill } from './ui';
-import type { Tone } from './ui';
+import HrZoneDistributionCard from './HrZoneDistributionCard';
+import { KpiTile, ScreenHeader, SegmentedTabs, StatusPill, type Tone } from './ui';
 import SessionAnalysisTab from './SessionAnalysisTab';
 
 const RANGES = [7, 28, 90] as const;
 type Range = (typeof RANGES)[number];
-const tip = {
-  contentStyle: {
-    background: '#111216',
-    border: '1px solid rgba(255,255,255,0.12)',
-    borderRadius: 12,
-    color: '#f4f5f7',
-    fontSize: 12,
-  },
-};
-const axis = { stroke: '#64748b', fontSize: 11, tickLine: false };
+
+const axis = { stroke: '#71717A', fontSize: 11, tickLine: false, axisLine: false };
 const short = (ts: number) => new Date(ts).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
 
 /** Angka desimal gaya Indonesia: 12,3 (koma). */
@@ -49,32 +54,69 @@ const INTENSITY_PILL: Record<'insufficient' | 'balanced' | 'too_hard' | 'base_bu
 };
 
 const ACWR_PILL: Record<AcwrStatus, { tone: Exclude<Tone, 'neutral'>; label: string }> = {
-  unknown: { tone: 'info', label: 'Belum cukup data' },
+  unknown: { tone: 'info', label: 'Data belum cukup' },
   undertraining: { tone: 'info', label: 'Ringan' },
   sweet_spot: { tone: 'good', label: 'Aman' },
   high_fatigue: { tone: 'bad', label: 'Terlalu Berat' },
 };
 
-function Card({ title, children }: { title: string; children: ReactNode }) {
+function Card({ title, subtitle, className = '', children }: { title: string; subtitle?: string; className?: string; children: ReactNode }) {
   return (
-    <section className="sport-card p-4">
-      <h2 className="mb-3 font-display text-sm font-bold text-slate-200">{title}</h2>
+    <section className={`sport-card p-5 ${className}`}>
+      <div className="mb-3.5">
+        <h2 className="font-display text-base font-bold tracking-tight text-white">{title}</h2>
+        {subtitle && <p className="mt-0.5 text-xs text-zinc-400">{subtitle}</p>}
+      </div>
       {children}
     </section>
   );
 }
 
 const CALLOUT_STYLE: Record<'good' | 'warn' | 'info', string> = {
-  good: 'border-volt/25 bg-volt/[0.07] text-slate-100',
-  warn: 'border-coral/35 bg-coral/[0.08] text-orange-100',
-  info: 'border-white/10 bg-[#191B22] text-slate-200',
+  good: 'border-[#BEF264]/25 bg-[#BEF264]/[0.07] text-zinc-100',
+  warn: 'border-rose-500/30 bg-rose-500/[0.08] text-rose-100',
+  info: 'border-white/10 bg-[#18181D] text-zinc-200',
 };
 
 function ChartSummary({ tone = 'info', text }: { tone?: 'good' | 'warn' | 'info'; text: string }) {
   return (
-    <p className={`mb-3 rounded-xl border px-3 py-2 text-xs leading-relaxed ${CALLOUT_STYLE[tone]}`}>
+    <p className={`mb-4 rounded-2xl border px-3.5 py-2.5 text-xs leading-relaxed ${CALLOUT_STYLE[tone]}`}>
       {text}
     </p>
+  );
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  label?: string;
+  payload?: Array<{ value?: number | null; name?: string }>;
+  unitLabel: string;
+  valueFormatter: (v: number) => string;
+  accentClass?: string;
+}
+
+function DarkChartTooltip({ active, label, payload, unitLabel, valueFormatter, accentClass = 'text-[#BEF264]' }: CustomTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const raw = payload[0]?.value;
+  if (raw == null || Number.isNaN(Number(raw))) return null;
+  return (
+    <div className="rounded-2xl border border-white/15 bg-[#121215]/95 px-3.5 py-2.5 text-xs shadow-2xl backdrop-blur-md">
+      <div className="font-medium text-zinc-400">{label}</div>
+      <div className={`mt-1 font-mono text-base font-extrabold tabular-nums ${accentClass}`}>
+        {valueFormatter(Number(raw))}
+      </div>
+      <div className="mt-0.5 text-[11px] text-zinc-400">{unitLabel}</div>
+    </div>
+  );
+}
+
+function EmptyChartState({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-[#18181D]/60 px-4 py-12 text-center">
+      <BarChart3 size={24} className="text-zinc-500" aria-hidden />
+      <p className="mt-2.5 text-sm font-semibold text-zinc-200">{title}</p>
+      <p className="mt-1 max-w-sm text-xs leading-relaxed text-zinc-400">{description}</p>
+    </div>
   );
 }
 
@@ -104,7 +146,6 @@ function programContextFor(profile: UserProfile, workouts: Workout[], now: numbe
   const mafAdjustment = loadMafAdj();
   const maf = curriculum === 'maf' ? mafHr(profile.age, mafAdjustment) : null;
   const mafPts = curriculum === 'maf' ? mafTests(workouts, maf) : [];
-  // Patokan pace MAF hanya dari catatan MAF sendiri. Tanpa catatan → null; tidak pernah jatuh ke pace VDOT.
   const mafPaceSecPerKm = mafPts.length ? mafPts[mafPts.length - 1].paceSecPerKm : null;
 
   const vd = currentVdot(workouts, now);
@@ -161,9 +202,12 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
     .filter((w) => w.workoutType === 'easy' || w.workoutType === 'long_run')
     .sort((a, b) => a.date - b.date)
     .map((w) => ({ d: short(w.date), ef: w.efficiencyFactor ?? efficiencyFactor(w) }));
-  const trend = progress.series.map((p) => ({ d: short(p.date), pace: p.easyPaceSec }));
-  const hasPace = trend.some((p) => p.pace != null);
-  const weekly = weeklyKm(workouts, now, Math.max(1, Math.round(days / 7)));
+  const trend = progress.series
+    .filter((p) => p.easyPaceSec != null)
+    .map((p) => ({ d: short(p.date), pace: p.easyPaceSec }));
+  const hasPace = trend.length > 0;
+  const weekly = weeklyKm(workouts, now, Math.max(2, Math.round(days / 7)));
+  const hasWeekly = weekly.some((w) => w.km > 0);
   const preds = predictAll(workouts, now);
   const program = programContextFor(profile, workouts, now, preds);
   const period = analyzeWorkoutPeriod(workouts, now, days, {
@@ -177,6 +221,7 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
   const dists = Object.keys(RACE_KM) as RaceDistance[];
   const vd = currentVdot(workouts, now);
   const maxHr = resolveMaxHr(profile, workouts);
+  const effectiveMaxHr = maxHr ?? (profile.age > 0 ? tanakaMaxHr(profile.age) : null);
 
   // ── Catatan perubahan pada ubin KPI ──────────────────────────────────────
   const ago = `${days} hr lalu`;
@@ -250,7 +295,7 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
 
   const kmDelta = progress.kmDeltaPct;
   const weeklyChartSummary: { tone: 'good' | 'warn' | 'info'; text: string } =
-    weekly.every((w) => w.km === 0)
+    !hasWeekly
       ? { tone: 'info', text: 'Belum ada jarak lari yang tercatat pada rentang waktu ini.' }
       : kmDelta != null && kmDelta >= 15
         ? { tone: 'warn', text: 'Total jarak mingguanmu naik cukup cepat—pastikan tetap menyelipkan hari santai agar otot dan sendi tidak kaget.' }
@@ -259,27 +304,38 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
           : { tone: 'good', text: 'Total jarak lari mingguanmu berjalan konsisten, kebiasaan baik untuk membangun daya tahan jangka panjang.' };
 
   return (
-    <div className="space-y-4">
-      <ScreenHeader title="Analitik" subtitle="Perkembangan kebugaran & beban latihan" />
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <ScreenHeader title="Analitik" subtitle="Perkembangan kebugaran, beban latihan & evaluasi sesi" />
 
-      <div role="group" aria-label="Rentang waktu" className="grid grid-cols-3 gap-1 rounded-full border border-white/[0.08] bg-[#111216] p-1">
-        {RANGES.map((r) => (
-          <button key={r} type="button" aria-pressed={days === r} onClick={() => setDays(r)}
-            className={`min-h-[40px] rounded-full font-display text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
-              days === r ? 'bg-volt text-[#070709]' : 'text-slate-400 hover:text-slate-200'
-            }`}>
-            {r} Hari
-          </button>
-        ))}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div role="group" aria-label="Rentang waktu" className="grid grid-cols-3 gap-1 rounded-2xl border border-white/10 bg-[#121215] p-1">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                aria-pressed={days === r}
+                onClick={() => setDays(r)}
+                className={`min-h-[38px] whitespace-nowrap rounded-xl px-3 font-display text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                  days === r ? 'bg-[#BEF264] text-[#09090B]' : 'text-zinc-400 hover:text-zinc-100'
+                }`}
+              >
+                {r} Hari
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <SegmentedTabs idBase="analitik" label="Tampilan analitik" tabs={VIEW_TABS} value={view} onChange={setView} />
+      <div className="max-w-md">
+        <SegmentedTabs idBase="analitik" label="Tampilan analitik" tabs={VIEW_TABS} value={view} onChange={setView} />
+      </div>
 
       {view === 'sesi' ? (
         <SessionAnalysisTab days={days} curriculum={program.curriculum} items={period.items} summary={period.summary} />
       ) : view === 'grafik' ? (
-        <div className="space-y-3">
-          <div role="group" aria-label="Pilih grafik" className="flex flex-wrap gap-1.5">
+        <div className="space-y-4">
+          <div role="group" aria-label="Pilih grafik" className="flex flex-wrap gap-2">
             {CHART_TABS.map((t) => {
               const active = chartKind === t.id;
               return (
@@ -288,10 +344,10 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
                   type="button"
                   aria-pressed={active}
                   onClick={() => setChartKind(t.id)}
-                  className={`min-h-[38px] rounded-full border px-3.5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
+                  className={`min-h-[40px] whitespace-nowrap rounded-2xl border px-4 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
                     active
-                      ? 'border-volt bg-volt text-[#070709]'
-                      : 'border-white/10 bg-[#191B22] text-slate-300 hover:text-white'
+                      ? 'border-[#BEF264] bg-[#BEF264] text-[#09090B]'
+                      : 'border-white/10 bg-[#121215] text-zinc-300 hover:border-white/20 hover:text-white'
                   }`}
                 >
                   {t.label}
@@ -300,22 +356,61 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             })}
           </div>
 
-          <Card title={CHART_TABS.find((t) => t.id === chartKind)?.label ?? 'Grafik'}>
+          <Card
+            title={CHART_TABS.find((t) => t.id === chartKind)?.label ?? 'Grafik'}
+            subtitle={`Data ${days} hari terakhir`}
+          >
             {chartKind === 'pace' && (
               <>
                 <ChartSummary tone={paceChartSummary.tone} text={paceChartSummary.text} />
                 {hasPace ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={trend}>
-                      <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                      <XAxis dataKey="d" {...axis} minTickGap={24} />
-                      <YAxis {...axis} width={40} reversed domain={['auto', 'auto']} tickFormatter={(v: number) => fmtPace(v)} />
-                      <Tooltip {...tip} formatter={(v) => [`${fmtPace(Number(v))} /km`, 'Pace santai']} />
-                      <Line dataKey="pace" stroke="#38BDF8" dot={{ r: 3, fill: '#38BDF8' }} connectNulls strokeWidth={2.5} />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  <div className="h-[240px] w-full sm:h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={trend} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="paceAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#BEF264" stopOpacity={0.32} />
+                            <stop offset="100%" stopColor="#BEF264" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                        <XAxis dataKey="d" {...axis} minTickGap={24} />
+                        <YAxis {...axis} width={44} reversed domain={['auto', 'auto']} tickFormatter={(v: number) => fmtPace(v)} />
+                        {cur.easyAvgPaceSec != null && (
+                          <ReferenceLine
+                            y={cur.easyAvgPaceSec}
+                            stroke="#BEF264"
+                            strokeDasharray="4 4"
+                            strokeOpacity={0.5}
+                          />
+                        )}
+                        <Tooltip
+                          content={
+                            <DarkChartTooltip
+                              unitLabel="Rata-rata pace lari santai (garis putus: rata-rata periode)"
+                              valueFormatter={(v) => `${fmtPace(v)} /km`}
+                              accentClass="text-[#BEF264]"
+                            />
+                          }
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="pace"
+                          stroke="#BEF264"
+                          strokeWidth={2.5}
+                          fill="url(#paceAreaGrad)"
+                          dot={{ r: 3.5, fill: '#09090B', stroke: '#BEF264', strokeWidth: 2 }}
+                          activeDot={{ r: 5.5, fill: '#BEF264', stroke: '#09090B', strokeWidth: 2 }}
+                          connectNulls
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
                 ) : (
-                  <p className="py-10 text-center text-sm text-slate-400">Belum ada sesi easy atau long run dalam rentang ini.</p>
+                  <EmptyChartState
+                    title="Belum ada data pace santai"
+                    description={`Catat sesi Easy Run atau Long Run dalam ${days} hari terakhir untuk melihat grafik progres kecepatan.`}
+                  />
                 )}
               </>
             )}
@@ -324,17 +419,53 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
               <>
                 <ChartSummary tone={efChartSummary.tone} text={efChartSummary.text} />
                 {efData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={efData}>
-                      <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                      <XAxis dataKey="d" {...axis} minTickGap={24} />
-                      <YAxis {...axis} width={36} domain={['auto', 'auto']} />
-                      <Tooltip {...tip} formatter={(v) => [dec(Number(v), 2), 'Efisiensi (EF)']} />
-                      <Line dataKey="ef" stroke="#C8FF00" dot={{ r: 3, fill: '#C8FF00' }} connectNulls strokeWidth={2.5} />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  <div className="h-[240px] w-full sm:h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={efData} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="efAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#38BDF8" stopOpacity={0.35} />
+                            <stop offset="100%" stopColor="#38BDF8" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                        <XAxis dataKey="d" {...axis} minTickGap={24} />
+                        <YAxis {...axis} width={40} domain={['auto', 'auto']} />
+                        {cur.avgEf != null && (
+                          <ReferenceLine
+                            y={cur.avgEf}
+                            stroke="#38BDF8"
+                            strokeDasharray="4 4"
+                            strokeOpacity={0.5}
+                          />
+                        )}
+                        <Tooltip
+                          content={
+                            <DarkChartTooltip
+                              unitLabel="Efisiensi Aerobik (kecepatan ÷ HR)"
+                              valueFormatter={(v) => dec(v, 2)}
+                              accentClass="text-sky-400"
+                            />
+                          }
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="ef"
+                          stroke="#38BDF8"
+                          strokeWidth={2.5}
+                          fill="url(#efAreaGrad)"
+                          dot={{ r: 3.5, fill: '#09090B', stroke: '#38BDF8', strokeWidth: 2 }}
+                          activeDot={{ r: 5.5, fill: '#38BDF8', stroke: '#09090B', strokeWidth: 2 }}
+                          connectNulls
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
                 ) : (
-                  <p className="py-10 text-center text-sm text-slate-400">Belum ada sesi easy atau long run dengan data detak jantung.</p>
+                  <EmptyChartState
+                    title="Belum ada data Efisiensi Jantung"
+                    description="Dibutuhkan sesi Easy atau Long Run dengan data detak jantung (HR) untuk menghitung Efficiency Factor."
+                  />
                 )}
               </>
             )}
@@ -343,18 +474,49 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
               <>
                 <ChartSummary tone={acwrChartSummary.tone} text={acwrChartSummary.text} />
                 {hasSessions ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={acwrData}>
-                      <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                      <ReferenceArea y1={0.8} y2={1.3} fill="#C8FF00" fillOpacity={0.08} />
-                      <XAxis dataKey="d" {...axis} minTickGap={24} />
-                      <YAxis domain={[0, acwrMax]} {...axis} width={28} />
-                      <Tooltip {...tip} formatter={(v) => [dec(Number(v), 2), 'Rasio Beban (ACWR)']} />
-                      <Line dataKey="acwr" stroke="#C8FF00" dot={false} connectNulls strokeWidth={2.5} />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  <div className="h-[240px] w-full sm:h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={acwrData} margin={{ top: 10, right: 12, left: -12, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="acwrAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#BEF264" stopOpacity={0.3} />
+                            <stop offset="100%" stopColor="#BEF264" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                        <ReferenceArea y1={0.8} y2={1.3} fill="#BEF264" fillOpacity={0.08} />
+                        <ReferenceLine y={0.8} stroke="#38BDF8" strokeDasharray="4 4" strokeOpacity={0.55} />
+                        <ReferenceLine y={1.3} stroke="#BEF264" strokeDasharray="4 4" strokeOpacity={0.6} />
+                        <ReferenceLine y={1.5} stroke="#F43F5E" strokeDasharray="4 4" strokeOpacity={0.65} />
+                        <XAxis dataKey="d" {...axis} minTickGap={24} />
+                        <YAxis domain={[0, acwrMax]} {...axis} width={36} />
+                        <Tooltip
+                          content={
+                            <DarkChartTooltip
+                              unitLabel="Rasio ACWR (zona optimal 0,8–1,3)"
+                              valueFormatter={(v) => dec(v, 2)}
+                              accentClass="text-[#BEF264]"
+                            />
+                          }
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="acwr"
+                          stroke="#BEF264"
+                          strokeWidth={2.5}
+                          fill="url(#acwrAreaGrad)"
+                          dot={false}
+                          activeDot={{ r: 5, fill: '#BEF264', stroke: '#09090B', strokeWidth: 2 }}
+                          connectNulls
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
                 ) : (
-                  <p className="py-10 text-center text-sm text-slate-400">Belum ada sesi dalam {days} hari terakhir untuk grafik beban.</p>
+                  <EmptyChartState
+                    title="Belum ada grafik rasio beban"
+                    description={`Belum ada sesi lari dalam ${days} hari terakhir untuk memetakan tren ACWR.`}
+                  />
                 )}
               </>
             )}
@@ -362,134 +524,234 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             {chartKind === 'weekly' && (
               <>
                 <ChartSummary tone={weeklyChartSummary.tone} text={weeklyChartSummary.text} />
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={weekly}>
-                    <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                    <XAxis dataKey="label" {...axis} />
-                    <YAxis {...axis} width={28} />
-                    <Tooltip {...tip} formatter={(v) => [`${dec(Number(v), 1)} km`, 'Volume']} />
-                    <Bar dataKey="km" fill="#C8FF00" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {hasWeekly ? (
+                  <div className="h-[240px] w-full sm:h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={weekly} margin={{ top: 10, right: 12, left: -12, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="analitikCyanBar" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#38BDF8" stopOpacity={0.9} />
+                            <stop offset="100%" stopColor="#38BDF8" stopOpacity={0.28} />
+                          </linearGradient>
+                          <linearGradient id="analitikLimeBar" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#BEF264" stopOpacity={1} />
+                            <stop offset="100%" stopColor="#BEF264" stopOpacity={0.45} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                        <XAxis dataKey="label" {...axis} />
+                        <YAxis {...axis} width={36} />
+                        {profile.weeklyTargetKm != null && profile.weeklyTargetKm > 0 && (
+                          <ReferenceLine
+                            y={profile.weeklyTargetKm}
+                            stroke="#BEF264"
+                            strokeDasharray="4 4"
+                            strokeOpacity={0.7}
+                          />
+                        )}
+                        <Tooltip
+                          cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                          content={
+                            <DarkChartTooltip
+                              unitLabel={
+                                profile.weeklyTargetKm
+                                  ? `Total volume mingguan (target ${profile.weeklyTargetKm} km)`
+                                  : 'Total volume lari mingguan'
+                              }
+                              valueFormatter={(v) => `${dec(v, 1)} km`}
+                              accentClass="text-sky-400"
+                            />
+                          }
+                        />
+                        <Bar dataKey="km" radius={[8, 8, 2, 2]} maxBarSize={44}>
+                          {weekly.map((_, i) => (
+                            <Cell
+                              key={i}
+                              fill={i === weekly.length - 1 ? 'url(#analitikLimeBar)' : 'url(#analitikCyanBar)'}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <EmptyChartState
+                    title="Belum ada volume mingguan"
+                    description={`Catat sesi lari untuk melihat distribusi kilometer per minggu dalam ${days} hari terakhir.`}
+                  />
+                )}
               </>
             )}
           </Card>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5">
           {/* Kartu 1 — Perkembangan Utama */}
-          <Card title="Perkembangan Utama">
-            <div className={`rounded-2xl border border-white/[0.08] border-l-4 bg-[#191B22] px-3.5 py-3 text-sm font-medium text-slate-100 ${improving ? 'border-l-[#C8FF00]' : 'border-l-[#38BDF8]'}`}>
-              {hasSessions
-                ? progress.headline
-                : `Belum ada sesi dalam ${days} hari terakhir. Ketuk tombol + di bawah untuk mencatat sesi.`}
+          <Card title="Perkembangan Utama" subtitle={`Ringkasan ${days} hari terakhir`} className="flex flex-col justify-between lg:col-span-7">
+            <div>
+              <div className="flex items-start gap-3 rounded-2xl border border-white/[0.08] bg-[#18181D] px-4 py-3.5 text-sm font-medium text-zinc-100">
+                <TrendingUp
+                  size={18}
+                  aria-hidden
+                  className={`mt-0.5 shrink-0 ${improving ? 'text-[#BEF264]' : 'text-sky-400'}`}
+                />
+                <span className="leading-relaxed">
+                  {hasSessions
+                    ? progress.headline
+                    : `Belum ada sesi dalam ${days} hari terakhir. Ketuk tombol Catat Sesi untuk memulai.`}
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <KpiTile label="Jarak" value={dec(cur.totalKm)} unit="km" context={kmNote} tone="info" accentClass="text-sky-400" />
+                <KpiTile
+                  label="Pace Santai"
+                  value={cur.easyAvgPaceSec != null ? fmtPace(cur.easyAvgPaceSec) : '–'}
+                  unit="/km"
+                  context={paceNote}
+                  tone={paceTone}
+                  accentClass="text-[#BEF264]"
+                />
+                <KpiTile
+                  label="Efisiensi Jantung"
+                  value={cur.avgEf != null ? dec(cur.avgEf, 2) : '–'}
+                  context={efNote}
+                  tone={efTone}
+                />
+                <KpiTile
+                  label="Kadens"
+                  value={cur.avgCadence != null ? Math.round(cur.avgCadence) : '–'}
+                  unit="spm"
+                  context={driftNote}
+                  tone={driftTone}
+                />
+              </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <KpiTile label="Jarak" value={dec(cur.totalKm)} unit="km" context={kmNote} tone="info" />
-              <KpiTile label="Pace Santai" value={cur.easyAvgPaceSec != null ? fmtPace(cur.easyAvgPaceSec) : '–'} unit="/km" context={paceNote} tone={paceTone} />
-              <KpiTile label="Efisiensi Jantung" value={cur.avgEf != null ? dec(cur.avgEf, 2) : '–'} context={efNote} tone={efTone} />
-              <KpiTile label="Kadens" value={cur.avgCadence != null ? Math.round(cur.avgCadence) : '–'} unit="spm" context={driftNote} tone={driftTone} />
-            </div>
-
-            <details className="group mt-3 rounded-2xl border border-white/[0.08] bg-[#191B22]/70">
-              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-semibold text-slate-300">
+            <details className="group mt-4 rounded-2xl border border-white/[0.08] bg-[#18181D]/70">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3.5 text-xs font-semibold text-zinc-300">
                 <span>Apa arti metrik ini?</span>
-                <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
+                <ChevronDown className="h-4 w-4 text-zinc-400 transition-transform group-open:rotate-180" aria-hidden />
               </summary>
-              <div className="space-y-2 border-t border-white/[0.06] px-3 py-2.5 text-xs leading-relaxed text-slate-300">
+              <div className="space-y-2 border-t border-white/[0.06] px-3.5 py-3 text-xs leading-relaxed text-zinc-300">
                 {real.length > 0 && (
                   <p>
-                    <strong className="text-slate-100">Dibanding {days} hari lalu:</strong> {real.join(' · ')}.
+                    <strong className="text-zinc-100">Dibanding {days} hari lalu:</strong> {real.join(' · ')}.
                   </p>
                 )}
                 <p>
-                  <strong className="text-slate-100">Efisiensi Jantung (EF):</strong> rasio kecepatan lari terhadap detak jantung. Makin tinggi berarti jantung makin hemat tenaga.
+                  <strong className="text-zinc-100">Efisiensi Jantung (EF):</strong> rasio kecepatan lari terhadap detak jantung. Makin tinggi berarti jantung makin hemat tenaga.
                 </p>
                 <p>
-                  <strong className="text-slate-100">Cardiac Drift:</strong> kenaikan detak jantung di paruh akhir lari; di bawah 5% menandakan fondasi aerobik baik.
+                  <strong className="text-zinc-100">Cardiac Drift:</strong> kenaikan detak jantung di paruh akhir lari; di bawah 5% menandakan fondasi aerobik baik.
                 </p>
               </div>
             </details>
           </Card>
 
           {/* Kartu 2 — Kondisi Beban & Intensitas */}
-          <Card title="Kondisi Beban & Intensitas">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-slate-400">Rasio Beban Tubuh (ACWR)</span>
-              <StatusPill tone={acwrPill.tone}>{acwrPill.label}</StatusPill>
-            </div>
-            <div className="mt-2">
-              <AcwrGauge ratio={gauge.ratio} status={gauge.status} />
+          <Card title="Kondisi Beban & Intensitas" subtitle="Rasio ACWR & distribusi 80/20" className="flex flex-col justify-between lg:col-span-5">
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-zinc-400">Rasio Beban Tubuh (ACWR)</span>
+                <StatusPill tone={acwrPill.tone}>{acwrPill.label}</StatusPill>
+              </div>
+              <div className="mt-3">
+                <AcwrGauge ratio={gauge.ratio} status={gauge.status} />
+              </div>
             </div>
 
-            <div className="mt-4 border-t border-white/[0.08] pt-3.5">
+            <div className="mt-5 border-t border-white/[0.08] pt-4">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Prinsip 80/20</span>
+                <span className="text-xs font-bold text-zinc-300">Prinsip 80/20</span>
                 <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
               </div>
-              <div className="flex h-2.5 overflow-hidden rounded-full bg-white/10" role="img"
-                aria-label={easy == null ? 'Belum ada data' : `Lari santai ${Math.round(easy)} persen, lari cepat ${Math.round(quality ?? 0)} persen`}>
+              <div
+                className="flex h-2.5 overflow-hidden rounded-full bg-white/10"
+                role="img"
+                aria-label={easy == null ? 'Belum ada data' : `Lari santai ${Math.round(easy)} persen, lari cepat ${Math.round(quality ?? 0)} persen`}
+              >
                 {easy != null && <div className="bg-sky-400" style={{ width: `${easy}%` }} />}
-                {quality != null && <div className="bg-coral" style={{ width: `${quality}%` }} />}
+                {quality != null && <div className="bg-rose-500" style={{ width: `${quality}%` }} />}
               </div>
-              <div className="mt-2 flex justify-between text-xs">
-                <span className="text-sky-300">● Santai <strong className="font-mono">{easy == null ? '–' : `${Math.round(easy)}%`}</strong></span>
-                <span className="text-coral">● Cepat <strong className="font-mono">{quality == null ? '–' : `${Math.round(quality)}%`}</strong></span>
+              <div className="mt-2 flex justify-between text-xs tabular-nums">
+                <span className="text-sky-400">
+                  Santai <strong className="font-mono">{easy == null ? '–' : `${Math.round(easy)}%`}</strong>
+                </span>
+                <span className="text-rose-400">
+                  Cepat <strong className="font-mono">{quality == null ? '–' : `${Math.round(quality)}%`}</strong>
+                </span>
               </div>
-              <p className="mt-2.5 text-xs leading-relaxed text-slate-300">{loadAdvice}</p>
+              <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">{loadAdvice}</p>
             </div>
           </Card>
 
-          {/* Kartu 3 — Rekor & Prediksi Lomba */}
-          <Card title="Rekor & Prediksi Lomba">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="sport-subcard p-2.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Terpanjang</div>
-                <div className="mt-1 font-mono text-base font-extrabold text-white">
-                  {dec(cur.longestKm)}<span className="ml-0.5 font-sans text-xs font-semibold text-slate-400"> km</span>
-                </div>
-              </div>
-              <div className="sport-subcard p-2.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Tercepat</div>
-                <div className="mt-1 font-mono text-base font-extrabold text-white">
-                  {cur.bestPaceSec != null ? fmtPace(cur.bestPaceSec) : '–'}<span className="ml-0.5 font-sans text-xs font-semibold text-slate-400"> /km</span>
-                </div>
-              </div>
-              <div className="sport-subcard p-2.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Frekuensi</div>
-                <div className="mt-1 font-mono text-base font-extrabold text-white">
-                  {dec(cur.sessionsPerWeek)}<span className="ml-0.5 font-sans text-xs font-semibold text-slate-400"> /mgg</span>
-                </div>
-              </div>
-            </div>
+          {/* Kartu 2b — Distribusi Zona Detak Jantung (Z1–Z5) */}
+          <HrZoneDistributionCard
+            workouts={inRange}
+            days={days}
+            maxHr={effectiveMaxHr}
+            className="lg:col-span-12"
+          />
 
-            <div className="mt-3 divide-y divide-white/[0.06]">
-              {dists.map((d) => {
-                const p = preds[d];
-                return (
-                  <div key={d} className="flex items-center justify-between py-2 text-sm">
-                    <span className="font-medium text-slate-400">{d}</span>
-                    <span className="font-mono font-bold text-white">{p ? fmtHms(p.finalSec) : '–'}</span>
+          {/* Kartu 3 — Rekor, Prediksi Lomba & Zona Pace */}
+          <div className="grid grid-cols-1 gap-4 lg:col-span-12 lg:grid-cols-12 lg:gap-5">
+            <Card title="Rekor & Prediksi Lomba" subtitle="Estimasi waktu Riegel dari performa terkini" className="lg:col-span-5">
+              <div className="grid grid-cols-3 gap-2.5 text-center">
+                <div className="sport-subcard p-3">
+                  <div className="text-[11px] font-medium text-zinc-400">Terpanjang</div>
+                  <div className="mt-1 font-mono text-base font-extrabold tabular-nums text-sky-400">
+                    {dec(cur.longestKm)}
+                    <span className="ml-0.5 font-sans text-xs font-semibold text-zinc-400"> km</span>
                   </div>
-                );
-              })}
-            </div>
-
-            <details className="group mt-3 rounded-2xl border border-white/[0.08] bg-[#191B22]/70">
-              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-semibold text-slate-300">
-                <span>Lihat zona pace &amp; HR</span>
-                <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
-              </summary>
-              <div className="border-t border-white/[0.06] p-2.5">
-                {vd != null ? (
-                  <ZonaPaceCard vdot={vd} maxHr={maxHr} />
-                ) : (
-                  <p className="p-2 text-xs text-slate-400">Catat minimal 1 sesi lari ≥ 3 km untuk menghitung zona pace dan detak jantung.</p>
-                )}
+                </div>
+                <div className="sport-subcard p-3">
+                  <div className="text-[11px] font-medium text-zinc-400">Tercepat</div>
+                  <div className="mt-1 font-mono text-base font-extrabold tabular-nums text-[#BEF264]">
+                    {cur.bestPaceSec != null ? fmtPace(cur.bestPaceSec) : '–'}
+                    <span className="ml-0.5 font-sans text-xs font-semibold text-zinc-400"> /km</span>
+                  </div>
+                </div>
+                <div className="sport-subcard p-3">
+                  <div className="text-[11px] font-medium text-zinc-400">Frekuensi</div>
+                  <div className="mt-1 font-mono text-base font-extrabold tabular-nums text-white">
+                    {dec(cur.sessionsPerWeek)}
+                    <span className="ml-0.5 font-sans text-xs font-semibold text-zinc-400"> /mgg</span>
+                  </div>
+                </div>
               </div>
-            </details>
-          </Card>
+
+              <div className="mt-4 divide-y divide-white/[0.06]">
+                {dists.map((d) => {
+                  const p = preds[d];
+                  const isTarget = d === profile.targetDistance;
+                  return (
+                    <div key={d} className="flex items-center justify-between py-2.5 text-sm">
+                      <span className={`font-semibold ${isTarget ? 'text-[#BEF264]' : 'text-zinc-300'}`}>
+                        {d} {isTarget && <span className="ml-1 text-xs font-normal text-zinc-400">(Target)</span>}
+                      </span>
+                      <span className={`font-mono font-bold tabular-nums ${isTarget ? 'text-[#BEF264]' : 'text-white'}`}>
+                        {p ? fmtHms(p.finalSec) : '–'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <div className="lg:col-span-7">
+              {vd != null ? (
+                <ZonaPaceCard vdot={vd} maxHr={maxHr} />
+              ) : (
+                <Card title="Zona Pace Latihan" subtitle="Target kecepatan & detak jantung">
+                  <EmptyChartState
+                    title="Belum ada skor VDOT"
+                    description="Catat minimal 1 sesi lari ≥ 3 km untuk menghitung zona pace Easy, Marathon, Threshold, dan Interval."
+                  />
+                </Card>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

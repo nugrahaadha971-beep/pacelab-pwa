@@ -10,6 +10,7 @@ import type { PlanMode } from '../plans/planSelector';
 import { loadPlanMode, savePlanMode } from '../plans/scheduleStore';
 import { DAY_MS } from '../analytics/workload';
 import { fmtHms, todayStr } from './format';
+import RaceDayCard from './RaceDayCard';
 import TrainingPlan from './TrainingPlan';
 import { Field, KpiTile, ScreenHeader, SegmentedTabs } from './ui';
 
@@ -119,6 +120,8 @@ export default function Program({ profile, workouts, onProfileChange }: { profil
               {curriculum === 'maf' && <p className="mt-2 text-xs text-slate-400">Mode MAF fokus membangun fondasi aerobik; proyeksi PB dihitung dari performa terbaik terkini.</p>}
             </section>
           )}
+
+          <RaceDayCard profile={profile} workouts={workouts} />
 
           <section className={card} aria-label="Rekomendasi pelatih">
             <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Metode latihan</div>
