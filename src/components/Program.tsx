@@ -1,215 +1,666 @@
-import { useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { CalendarDays, Pencil, Plus, RotateCcw, Sparkles } from 'lucide-react';
 import type { RaceDistance, UserProfile, Workout } from '../analytics/types';
-import { db } from '../db/database';
-import { currentVdot, PENALTY_RULES, penaltyPct, predictAll, RACE_KM, velocityFor, ZONE_FRACTION } from '../analytics/predictor';
+import {
+  currentVdot,
+  PENALTY_RULES,
+  predictAll,
+  RACE_KM,
+  riegelProject,
+  velocityFor,
+  ZONE_FRACTION,
+} from '../analytics/predictor';
+import { resolveMaxHr } from '../plans/hrZones';
 import { fmtPace } from '../plans/pace';
-import { pbOutlook } from '../plans/adaptiveEngine';
-import { isoFromRaceTs, isValidIso, remaining } from '../plans/schedule';
-import { PLAN_LABEL, resolvePlan, selectBestPlan } from '../plans/planSelector';
-import type { PlanMode } from '../plans/planSelector';
-import { loadPlanMode, savePlanMode } from '../plans/scheduleStore';
+import type { SessionKind } from '../plans/nike5k';
+import {
+  addCustomSession,
+  applyPresetTemplate,
+  applyScheduleState,
+  buildPlan,
+  formatDateId,
+  formatDayMonthYear,
+  isoFromRaceTs,
+  isValidIso,
+  remaining,
+  updateCustomSession,
+} from '../plans/schedule';
+import type {
+  CustomSessionInput,
+  PlanSession,
+  PresetTemplateId,
+  ScheduleState,
+  WorkoutBlock,
+} from '../plans/schedule';
+import { loadScheduleState, saveScheduleState } from '../plans/scheduleStore';
+import {
+  initialBlocksForSession,
+  summarizeStructuredWorkout,
+  WORKOUT_PRESETS,
+} from '../plans/workoutBuilder';
+import type { WorkoutPresetTemplate } from '../plans/workoutBuilder';
 import { DAY_MS } from '../analytics/workload';
 import { fmtHms, todayStr } from './format';
 import RaceDayCard from './RaceDayCard';
+import Sheet from './Sheet';
+import TargetRaceModal from './TargetRaceModal';
 import TrainingPlan from './TrainingPlan';
-import { Field, KpiTile, ScreenHeader, SegmentedTabs } from './ui';
+import { WorkoutProfileBar, WorkoutStepBuilder } from './WorkoutStepBuilder';
+import { Button, Field, ScreenHeader, SegmentedTabs, SelectField } from './ui';
 
-type ProgramTab = 'ringkasan' | 'jadwal';
+type ProgramTab = 'jadwal' | 'analisa';
 const PROGRAM_TABS: ReadonlyArray<{ id: ProgramTab; label: string }> = [
-  { id: 'ringkasan', label: 'Ringkasan' },
   { id: 'jadwal', label: 'Jadwal' },
-];
-const card = 'sport-card p-4';
-const MODE_OPTIONS: ReadonlyArray<{ id: PlanMode; label: string; desc: string }> = [
-  { id: 'auto', label: 'Otomatis', desc: 'Dipilihkan sistem sesuai kondisi lari terakhirmu.' },
-  { id: 'progressive5k', label: 'Progresif 5K', desc: 'Kombinasi lari-jalan bertahap, paling aman untuk pemula.' },
-  { id: 'nike5k', label: 'Nike 5K', desc: 'Lari terus-menerus berdasarkan target kecepatan.' },
-  { id: 'maf', label: 'MAF', desc: 'Fokus menjaga detak jantung tetap rendah & nyaman.' },
+  { id: 'analisa', label: 'Analisa Lomba' },
 ];
 
-/** Bar progres dengan semantik progressbar; hijau bila sudah memenuhi syarat. */
-function Meter({ label, ratio }: { label: string; ratio: number }) {
-  const r = Math.min(1, Math.max(0, ratio));
+const SIM_DISTANCES: ReadonlyArray<{ id: RaceDistance; label: string }> = [
+  { id: '5K', label: '5K' },
+  { id: '10K', label: '10K' },
+  { id: '21.1K', label: 'Half Marathon' },
+  { id: '42.2K', label: 'Marathon' },
+];
+
+const PRESET_TEMPLATES: ReadonlyArray<{ id: PresetTemplateId; label: string; matchTitle?: string }> = [
+  { id: 'base5k', label: 'Dasar 5K', matchTitle: 'Dasar 5K' },
+  { id: 'base10k', label: 'Dasar 10K', matchTitle: 'Dasar 10K' },
+  { id: 'empty', label: 'Kosongkan' },
+];
+
+const SESSION_KIND_OPTIONS: ReadonlyArray<{ value: SessionKind; label: string }> = [
+  { value: 'recovery', label: 'Easy / Pemulihan' },
+  { value: 'long', label: 'Long Run' },
+  { value: 'speed', label: 'Speed / Interval' },
+  { value: 'race', label: 'Lomba' },
+];
+
+const SESSION_NAME_PLACEHOLDERS: Record<SessionKind, string> = {
+  recovery: 'Mis. Easy Run Zona 2',
+  speed: 'Mis. Norwegian 4×4',
+  long: 'Mis. Long Run Akhir Pekan',
+  race: 'Mis. Race Day 10K',
+};
+
+const SESSION_NOTE_PLACEHOLDERS: Record<SessionKind, string> = {
+  recovery: 'Opsional, mis. Jaga napas rileks & tetap di Zona 2',
+  speed: 'Opsional, mis. Fokus pace stabil di tiap ulangan',
+  long: 'Opsional, mis. Siapkan hidrasi setiap 20–25 menit',
+  race: 'Opsional, mis. Negative split & minum di pos air',
+};
+
+function defaultSimDateIso(): string {
+  const future = new Date(Date.now() + 14 * DAY_MS);
+  const y = future.getFullYear();
+  const m = String(future.getMonth() + 1).padStart(2, '0');
+  const d = String(future.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+interface CustomSessionSheetProps {
+  mode: 'create' | 'edit';
+  initialSession?: PlanSession;
+  defaultDate: string;
+  maxHr: number | null;
+  restingHr: number;
+  easyPaceSecPerKm: number;
+  onClose: () => void;
+  onSave: (payload: CustomSessionInput) => void;
+}
+
+function CustomSessionSheet({
+  mode,
+  initialSession,
+  defaultDate,
+  maxHr,
+  restingHr,
+  easyPaceSecPerKm,
+  onClose,
+  onSave,
+}: CustomSessionSheetProps) {
+  const formId = useId();
+  const dateFieldId = useId();
+  const [date, setDate] = useState(initialSession?.date ?? defaultDate);
+  const [name, setName] = useState(initialSession?.name ?? '');
+  const [kind, setKind] = useState<SessionKind>(initialSession?.kind ?? 'recovery');
+  const [blocks, setBlocks] = useState<WorkoutBlock[]>(() =>
+    initialBlocksForSession(initialSession),
+  );
+  const [note, setNote] = useState(initialSession?.note ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const displayDate = isValidIso(date) ? formatDayMonthYear(date) : 'Pilih tanggal';
+
+  const handleApplyPreset = (preset: WorkoutPresetTemplate) => {
+    setBlocks(preset.build());
+    setKind(preset.kind);
+    const trimmed = name.trim();
+    const isPresetName = WORKOUT_PRESETS.some((p) => p.name === trimmed);
+    if (!trimmed || isPresetName) {
+      setName(preset.name);
+    }
+    setError(null);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValidIso(date)) {
+      setError('Tanggal sesi tidak valid.');
+      return;
+    }
+    if (!name.trim()) {
+      setError('Nama sesi wajib diisi.');
+      return;
+    }
+    if (blocks.length === 0) {
+      setError('Tambahkan minimal satu langkah latihan.');
+      return;
+    }
+
+    const summary = summarizeStructuredWorkout(blocks, {
+      maxHr,
+      restingHr,
+      referencePaceSecPerKm: easyPaceSecPerKm,
+    });
+
+    onSave({
+      ...(initialSession ? { id: initialSession.id } : {}),
+      date,
+      kind,
+      name: name.trim(),
+      distanceKm: summary.distanceKm,
+      durationMin: summary.durationMin,
+      hr: summary.hr,
+      pace: summary.pace,
+      steps: summary.steps,
+      structuredSteps: summary.structuredSteps,
+      note: note.trim() || undefined,
+    });
+  };
+
   return (
-    <div
-      role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(r * 100)}
-      className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-[#272A35]"
+    <Sheet
+      title={mode === 'edit' ? 'Edit Sesi Program' : 'Input Sesi Program'}
+      titleId="custom-session-sheet-title"
+      wide
+      onClose={onClose}
+      footer={
+        <div className="space-y-2">
+          {error && (
+            <p
+              role="alert"
+              className="rounded-2xl border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-400"
+            >
+              {error}
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Batal
+            </Button>
+            <Button type="submit" form={formId}>
+              {mode === 'edit' ? 'Simpan Perubahan' : 'Simpan Sesi'}
+            </Button>
+          </div>
+        </div>
+      }
     >
-      <div
-        className={`h-full rounded-full ${r >= 1 ? 'bg-volt' : 'bg-sky-400'}`}
-        style={{ width: `${r * 100}%` }}
-      />
-    </div>
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
+        {/* Bagian Atas: Info Sesi */}
+        <Field
+          label="Nama Sesi"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={SESSION_NAME_PLACEHOLDERS[kind]}
+          required
+        />
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor={dateFieldId} className="text-sm font-semibold text-zinc-200">
+              Tanggal Sesi
+            </label>
+            <div className="relative mt-1">
+              <input
+                id={dateFieldId}
+                type="date"
+                aria-label="Tanggal Sesi"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                required
+                className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+              />
+              <div className="flex min-h-[44px] w-full items-center justify-between gap-2 rounded-2xl border border-white/10 bg-[#121215] px-3.5 py-2 text-sm font-medium tabular-nums text-zinc-100 peer-focus-visible:border-[#BEF264] peer-focus-visible:ring-2 peer-focus-visible:ring-[#BEF264]/35">
+                <span>{displayDate}</span>
+                <CalendarDays size={16} className="shrink-0 text-zinc-400" aria-hidden />
+              </div>
+            </div>
+          </div>
+
+          <SelectField
+            label="Kategori Sesi"
+            value={kind}
+            onChange={(e) => setKind(e.target.value as SessionKind)}
+          >
+            {SESSION_KIND_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </SelectField>
+        </div>
+
+        {/* Grafik Batang Mini (Workout Profile Bar) */}
+        <WorkoutProfileBar blocks={blocks} referencePaceSecPerKm={easyPaceSecPerKm} />
+
+        {/* Builder Langkah & Blok Repeat bergaya Garmin Connect */}
+        <WorkoutStepBuilder
+          blocks={blocks}
+          onChange={setBlocks}
+          onApplyPreset={handleApplyPreset}
+          maxHr={maxHr}
+          restingHr={restingHr}
+        />
+
+        <Field
+          label="Catatan Tambahan"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={SESSION_NOTE_PLACEHOLDERS[kind]}
+        />
+      </form>
+    </Sheet>
   );
 }
 
-export default function Program({ profile, workouts, onProfileChange }: { profile: UserProfile; workouts: Workout[]; onProfileChange: () => void }) {
+export default function Program({
+  profile,
+  workouts,
+  onProfileChange,
+}: {
+  profile: UserProfile;
+  workouts: Workout[];
+  onProfileChange: () => void;
+}) {
   const now = Date.now();
-  const [tab, setTab] = useState<ProgramTab>('ringkasan');
-  const raceIso = profile.targetRaceDate ? isoFromRaceTs(profile.targetRaceDate) : null;
-  const [raceText, setRaceText] = useState(raceIso ?? '');
-  const [mode, setMode] = useState<PlanMode>(loadPlanMode);
-  const chooseMode = (m: PlanMode) => { setMode(m); savePlanMode(m); };
-  const saveRaceDate = async (v: string) => {
-    setRaceText(v);
-    if (v !== '' && !isValidIso(v)) return;
-    await db.userProfile.put({ ...profile, targetRaceDate: v ? Date.parse(v) : 0 });
-    onProfileChange();
+  const [tab, setTab] = useState<ProgramTab>('jadwal');
+  const [targetModalOpen, setTargetModalOpen] = useState(false);
+  const [st, setSt] = useState<ScheduleState>(loadScheduleState);
+  const [sessionModal, setSessionModal] = useState<
+    { mode: 'create' } | { mode: 'edit'; session: PlanSession } | null
+  >(null);
+
+  const updateSchedule = (next: ScheduleState) => {
+    setSt(next);
+    saveScheduleState(next);
   };
-  const target: RaceDistance = profile.targetDistance;
-  const rem = raceIso ? remaining(raceIso, todayStr()) : null;
+
+  const profileRaceIso = profile.targetRaceDate > 0 ? isoFromRaceTs(profile.targetRaceDate) : '';
+  const [simOpen, setSimOpen] = useState(false);
+  const [simDistance, setSimDistance] = useState<RaceDistance>(profile.targetDistance);
+  const [simDateIso, setSimDateIso] = useState<string>(profileRaceIso);
+
+  useEffect(() => {
+    setSimDistance(profile.targetDistance);
+    setSimDateIso(profile.targetRaceDate > 0 ? isoFromRaceTs(profile.targetRaceDate) : '');
+  }, [profile.targetDistance, profile.targetRaceDate]);
+
+  const isSimulated =
+    simDistance !== profile.targetDistance ||
+    simDateIso !== profileRaceIso;
+
+  const effectiveDistance: RaceDistance = simDistance;
+  const validRaceIso = simDateIso && isValidIso(simDateIso) ? simDateIso : null;
+  const todayIso = todayStr();
+  const rem = validRaceIso ? remaining(validRaceIso, todayIso) : null;
   const daysLeft = rem ? rem.daysRemaining : null;
-  const goalPace = profile.targetTimeSec / RACE_KM[target];
+
+  const effectiveTargetSec = useMemo(() => {
+    if (effectiveDistance === profile.targetDistance) return profile.targetTimeSec;
+    return Math.round(
+      riegelProject(
+        profile.targetTimeSec,
+        RACE_KM[profile.targetDistance],
+        RACE_KM[effectiveDistance],
+      ),
+    );
+  }, [effectiveDistance, profile.targetDistance, profile.targetTimeSec]);
+
+  const goalPace = effectiveTargetSec / RACE_KM[effectiveDistance];
   const preds = predictAll(workouts, now);
-  const pred = preds[target];
-  const gap = pred ? pred.finalSec - profile.targetTimeSec : null;
-  const outlook = pred ? pbOutlook(pred.finalSec, profile.targetTimeSec, rem?.weeksRemaining ?? 0) : null;
-  const currentPace = pred ? pred.finalSec / RACE_KM[target] : null;
-  const rule = PENALTY_RULES[target];
+  const pred = preds[effectiveDistance];
+  const currentPace = pred ? pred.finalSec / RACE_KM[effectiveDistance] : null;
   const last28 = workouts.filter((w) => w.date <= now && now - w.date <= 28 * DAY_MS);
   const weeklyKm = last28.reduce((s, w) => s + w.distanceKm, 0) / 4;
-  const longRun = last28.filter((w) => w.workoutType === 'long_run').reduce((m, w) => Math.max(m, w.distanceKm), 0);
-  const pen = penaltyPct(target, workouts, now);
-  const penMin = pred ? (pred.finalSec - pred.baseSec) / 60 : 0;
   const vd = currentVdot(workouts, now);
   const easyPace = vd != null ? 60000 / velocityFor(vd, ZONE_FRACTION.easy) : 360;
-  const selection = selectBestPlan(workouts, profile, { now, projected5kSec: preds['5K']?.finalSec ?? null });
-  const curriculum = resolvePlan(mode, selection);
+  const maxHr = resolveMaxHr(profile, workouts);
+  const maxWeeklyKm = profile.weeklyTargetKm ?? PENALTY_RULES[profile.targetDistance]?.weeklyKm ?? 50;
+
+  const scheduledSessionsCount = useMemo(() => {
+    if (validRaceIso) {
+      const base = buildPlan({
+        raceIso: validRaceIso,
+        todayIso,
+        days: st.days,
+        raceName: `${effectiveDistance} · Hari Lomba`,
+        startWeeklyKm: weeklyKm,
+        maxWeeklyKm,
+        easyPaceSecPerKm: easyPace,
+        curriculum: 'custom',
+        maxHr,
+      });
+      const applied = applyScheduleState(base, st, validRaceIso);
+      return applied.weeks.flatMap((w) => w.sessions).filter((s) => s.kind !== 'race').length;
+    }
+    return (st.customSessions?.length ?? 0) + (st.aiSessions?.length ?? 0);
+  }, [validRaceIso, todayIso, st, effectiveDistance, weeklyKm, maxWeeklyKm, easyPace, maxHr]);
+
+  const activeProgramTitle =
+    st.programTitle ||
+    (st.aiSessions?.length
+      ? 'Program Susun AI'
+      : st.customOnly
+        ? 'Program Kustom'
+        : 'Jadwal Kalender Dasar');
+
+  const handleApplyPreset = (presetId: PresetTemplateId) => {
+    const next = applyPresetTemplate(st, presetId, {
+      todayIso,
+      raceIso: validRaceIso ?? (profileRaceIso || null),
+      maxHr,
+      trainingDays: st.days,
+    });
+    updateSchedule(next);
+  };
+
+  const handleSaveCustomSession = (payload: CustomSessionInput) => {
+    if (sessionModal?.mode === 'edit') {
+      updateSchedule(updateCustomSession(st, sessionModal.session.id, payload));
+    } else {
+      updateSchedule(addCustomSession(st, payload));
+    }
+    setSessionModal(null);
+  };
+
+  const handleToggleSim = () => {
+    if (!simOpen && !simDateIso) {
+      setSimDateIso(defaultSimDateIso());
+    }
+    setSimOpen((v) => !v);
+  };
+
+  const handleResetSim = () => {
+    setSimDistance(profile.targetDistance);
+    setSimDateIso(profileRaceIso);
+    setSimOpen(false);
+  };
+
+  const distanceTitle =
+    effectiveDistance === '21.1K'
+      ? 'Half Marathon'
+      : effectiveDistance === '42.2K'
+        ? 'Marathon'
+        : effectiveDistance;
+
+  const countdownBadge =
+    daysLeft == null
+      ? '–'
+      : daysLeft === 0
+        ? 'Hari Ini'
+        : daysLeft < 0
+          ? 'Lewat'
+          : `H-${daysLeft}`;
+
+  const countdownSub =
+    daysLeft == null
+      ? 'Atur tanggal lomba'
+      : daysLeft === 0
+        ? 'Hari Lomba (H-0)'
+        : daysLeft < 0
+          ? `${Math.abs(daysLeft)} hari lalu`
+          : `${daysLeft} hari lagi`;
+
+  const distanceKmText = `${String(Number(RACE_KM[effectiveDistance].toFixed(1))).replace('.', ',')} km`;
 
   return (
     <div className="space-y-4">
-      <ScreenHeader title="Program" subtitle="Rencana menuju lomba dan jadwal latihan" />
-      <SegmentedTabs idBase="program" label="Bagian program" tabs={PROGRAM_TABS} value={tab} onChange={setTab} />
+      <ScreenHeader title="Program" subtitle="Target lomba, program mandiri & evaluasi latihan" />
 
-      {tab === 'ringkasan' && (
-        <div id="program-panel-ringkasan" role="tabpanel" aria-labelledby="program-tab-ringkasan" className="space-y-4">
-          <section aria-label="Hitung mundur lomba" className="rounded-3xl border border-white/[0.08] bg-gradient-to-br from-[#191B22] via-[#111216] to-[#0D1208] p-5">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Menuju lomba {target}</div>
-            <div className="mt-1 flex items-baseline gap-2.5">
-              <span className="font-mono text-5xl font-extrabold tabular-nums text-volt">{daysLeft == null ? '–' : Math.max(0, daysLeft)}</span>
-              <span className="text-sm text-slate-300">
-                {daysLeft == null ? 'Isi tanggal lomba di bawah' : daysLeft < 0 ? 'Lomba sudah lewat' : `hari lagi · ${rem?.weeksRemaining} minggu`}
-              </span>
-            </div>
-            <div className="mt-4">
-              <Field label="Tanggal lomba" hint="Sinkron dengan Profil" type="date" value={raceText} onChange={(e) => void saveRaceDate(e.target.value)} />
-            </div>
-          </section>
-
-          <div className="grid grid-cols-2 gap-3">
-            <KpiTile label="Target waktu" value={fmtHms(profile.targetTimeSec)} tone="neutral" />
-            <KpiTile label="Pace dibutuhkan" value={fmtPace(goalPace)} unit="/km" tone="neutral" />
-            <KpiTile label="Perkiraan waktu saat ini" term="Riegel" value={pred ? fmtHms(pred.finalSec) : '–'} tone="neutral" />
-            <KpiTile
-              label="Selisih ke target"
-              value={gap == null ? '–' : gap > 0 ? `+${fmtHms(gap)}` : `−${fmtHms(-gap)}`}
-              tone={gap == null ? 'neutral' : gap > 0 ? 'warn' : 'good'}
-              context={gap == null ? undefined : gap > 0 ? 'masih di atas target' : 'sudah di bawah target'}
-            />
+      {/* Kartu Header Target Lomba Ringkas (2x2 Grid) */}
+      <section aria-label="Target Lomba" className="sport-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="font-display text-base font-bold text-white">Target Lomba</h2>
+            <span className="font-mono text-xs font-extrabold tabular-nums text-[#BEF264]">
+              {countdownBadge}
+            </span>
+            {isSimulated && (
+              <span className="text-xs font-semibold text-sky-400">· Simulasi</span>
+            )}
           </div>
 
-          {outlook && currentPace != null && (
-            <section className={`sport-card border-l-[3px] ${curriculum === 'maf' ? 'border-l-sky-400' : 'border-l-volt'} p-4 text-sm`}>
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Peluang memecahkan target (PB)</div>
-              <div className="mt-1 font-display text-base font-bold text-volt">{outlook.label}</div>
-              <div className="mt-2 tabular-nums text-slate-300">
-                Selisih waktu: {outlook.gapSec > 0 ? `+${Math.round(outlook.gapSec)} dtk (${fmtHms(outlook.gapSec)})` : `${Math.round(outlook.gapSec)} dtk, sudah di bawah target`}
-              </div>
-              <div className="tabular-nums text-slate-300">Pace: {fmtPace(currentPace)} → {fmtPace(goalPace)} /km</div>
-              {outlook.perWeekSec != null && <div className="tabular-nums text-slate-300">Perlu sekitar {outlook.perWeekSec.toFixed(1)} dtk perbaikan per minggu</div>}
-              {curriculum === 'maf' && <p className="mt-2 text-xs text-slate-400">Mode MAF fokus membangun fondasi aerobik; proyeksi PB dihitung dari performa terbaik terkini.</p>}
-            </section>
-          )}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTargetModalOpen(true)}
+              className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-full border border-[#BEF264]/35 bg-[#BEF264]/10 px-3.5 text-xs font-bold text-[#BEF264] transition hover:border-[#BEF264]/55 hover:bg-[#BEF264]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+            >
+              <Pencil size={13} aria-hidden />
+              <span>{profile.targetRaceDate > 0 ? 'Ubah Target' : 'Atur Target'}</span>
+            </button>
 
-          <RaceDayCard profile={profile} workouts={workouts} />
+            <button
+              type="button"
+              onClick={handleToggleSim}
+              aria-expanded={simOpen}
+              className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-full border border-white/10 bg-[#18181D] px-3.5 text-xs font-semibold text-zinc-200 transition hover:border-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+            >
+              <CalendarDays size={14} aria-hidden />
+              <span>{simOpen ? 'Tutup' : 'Simulasi'}</span>
+            </button>
 
-          <section className={card} aria-label="Rekomendasi pelatih">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Metode latihan</div>
-            <div className="mt-1 font-display text-base font-bold text-volt">
-              {mode === 'auto' ? 'Otomatis' : 'Pilihanmu'}: {PLAN_LABEL[curriculum]}
-            </div>
-            {mode !== 'auto' && curriculum !== selection.plan && (
-              <p className="mt-1 text-xs text-amber-400">Rekomendasi otomatis saat ini: {PLAN_LABEL[selection.plan]}.</p>
+            {isSimulated && (
+              <button
+                type="button"
+                onClick={handleResetSim}
+                aria-label="Reset simulasi"
+                className="inline-flex min-h-[44px] items-center gap-1 whitespace-nowrap rounded-full border border-white/10 bg-[#18181D] px-3 text-xs font-semibold text-zinc-300 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+              >
+                <RotateCcw size={13} aria-hidden />
+                <span>Reset</span>
+              </button>
             )}
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label="Pilih metode latihan">
-              {MODE_OPTIONS.map((opt) => {
-                const active = mode === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => chooseMode(opt.id)}
-                    className={`flex min-h-[56px] flex-col items-start justify-center rounded-2xl border px-3.5 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
-                      active
-                        ? 'border-volt/70 bg-volt/10 text-white'
-                        : 'border-white/10 bg-[#191B22] text-slate-200 hover:border-white/20'
-                    }`}
-                  >
-                    <span className={`font-display text-sm font-bold ${active ? 'text-volt' : 'text-white'}`}>{opt.label}</span>
-                    <span className={`mt-0.5 text-xs leading-snug ${active ? 'text-slate-200' : 'text-slate-400'}`}>
-                      {opt.desc}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-300">
-              {selection.reasons.map((r, i) => <li key={i}>{r}</li>)}
-            </ul>
-            {mode === 'maf' && (
-              <p className="mt-2 text-sm text-sky-300">Program MAF: semua lari di zona detak jantung MAF (180 − usia; 165 untuk usia ≤ 16). Atur kondisi Anda dan lihat zona di tab Jadwal.</p>
-            )}
-            {mode !== 'maf' && ((selection.metrics.easyHrPct != null && selection.metrics.easyHrPct > 0.8) || (selection.metrics.driftPct ?? 0) > 5) && (
-              <p className="mt-2 text-sm text-sky-300">Lari santai Anda masih di atas zona aerobik. Program MAF (batas detak jantung rendah) juga cocok untuk membangun fondasi.</p>
-            )}
-            {target !== '5K' && <p className="mt-2 text-xs text-slate-400">Ketiga program ini untuk 5K, sedangkan jarak target Anda {target}.</p>}
-          </section>
+          </div>
+        </div>
 
-          <section className={card}>
-            <h2 className="text-sm font-semibold text-slate-300">Volume dan long run</h2>
-            <div className="mt-2 text-sm tabular-nums">
-              Rata-rata 4 minggu: <span className="font-bold">{weeklyKm.toFixed(1)} km/minggu</span>
+        {simOpen && (
+          <div className="mt-3 rounded-2xl border border-white/[0.08] bg-[#18181D]/80 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Simulasi jarak lomba">
+                {SIM_DISTANCES.map((d) => {
+                  const active = simDistance === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setSimDistance(d.id)}
+                      className={`min-h-[40px] whitespace-nowrap rounded-xl border px-3 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                        active
+                          ? 'border-[#BEF264] bg-[#BEF264] text-[#09090B]'
+                          : 'border-white/10 bg-[#121215] text-zinc-300 hover:border-white/20 hover:text-white'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <input
+                type="date"
+                aria-label="Simulasi tanggal lomba"
+                value={simDateIso}
+                onChange={(e) => setSimDateIso(e.target.value)}
+                className="min-h-[40px] rounded-xl border border-white/10 bg-[#121215] px-3 text-xs font-medium text-zinc-100 tabular-nums focus:border-[#BEF264] focus:outline-none"
+              />
             </div>
-            {rule && (
-              <div className="mt-3">
-                <div className="flex justify-between text-xs text-slate-400"><span>Syarat {target}</span><span className="tabular-nums">{rule.weeklyKm} km/minggu</span></div>
-                <Meter label={`Volume mingguan terhadap syarat ${target}`} ratio={weeklyKm / rule.weeklyKm} />
-              </div>
-            )}
-            {profile.weeklyTargetKm != null && (
-              <div className="mt-3">
-                <div className="flex justify-between text-xs text-slate-400"><span>Target mingguan Anda</span><span className="tabular-nums">{profile.weeklyTargetKm} km</span></div>
-                <Meter label="Volume mingguan terhadap target Anda" ratio={weeklyKm / profile.weeklyTargetKm} />
-              </div>
-            )}
-            {rule && (
-              <div className="mt-3">
-                <div className="flex justify-between text-sm tabular-nums">
-                  <span>Long run terpanjang: <span className="font-bold">{longRun.toFixed(1)} km</span></span>
-                  <span className="text-xs text-slate-400">syarat {rule.longRunKm} km</span>
+          </div>
+        )}
+
+        <dl className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.08]">
+          <div className="bg-[#121215] px-3.5 py-2.5">
+            <dt className="text-[11px] font-medium text-zinc-400">Tanggal Lomba</dt>
+            <dd className="mt-0.5 truncate font-display text-sm font-bold tabular-nums text-white sm:text-base">
+              {validRaceIso ? formatDateId(validRaceIso) : 'Belum diatur'}
+            </dd>
+            <div className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-400">
+              {countdownSub}
+            </div>
+          </div>
+
+          <div className="bg-[#121215] px-3.5 py-2.5">
+            <dt className="text-[11px] font-medium text-zinc-400">Jarak Lomba</dt>
+            <dd className="mt-0.5 font-mono text-sm font-extrabold tabular-nums text-white sm:text-base">
+              {distanceTitle}
+            </dd>
+            <div className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-400">
+              {distanceKmText}{isSimulated ? ' · Simulasi' : ''}
+            </div>
+          </div>
+
+          <div className="bg-[#121215] px-3.5 py-2.5">
+            <dt className="text-[11px] font-medium text-zinc-400">Target Waktu</dt>
+            <dd className="mt-0.5 font-mono text-base font-extrabold tabular-nums text-[#BEF264] sm:text-lg">
+              {fmtHms(effectiveTargetSec)}
+            </dd>
+            <div className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-400">
+              {fmtPace(goalPace)} /km
+            </div>
+          </div>
+
+          <div className="bg-[#121215] px-3.5 py-2.5">
+            <dt className="text-[11px] font-medium text-zinc-400">Prediksi Riegel</dt>
+            <dd className="mt-0.5 font-mono text-base font-extrabold tabular-nums text-sky-400 sm:text-lg">
+              {pred ? fmtHms(pred.finalSec) : '–'}
+            </dd>
+            <div className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-400">
+              {currentPace != null ? `${fmtPace(currentPace)} /km` : 'Data lari < 5 km'}
+            </div>
+          </div>
+        </dl>
+      </section>
+
+      <SegmentedTabs idBase="program" label="Bagian program" tabs={PROGRAM_TABS} value={tab} onChange={setTab} />
+
+      {tab === 'jadwal' && (
+        <div id="program-panel-jadwal" role="tabpanel" aria-labelledby="program-tab-jadwal" className="space-y-4">
+          {/* Kartu Program Latihan Saya (Input Mandiri & Template Cepat) */}
+          <section aria-label="Program Latihan Saya" className="sport-card p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                    Program Latihan Saya
+                  </span>
+                  <span className="font-mono text-xs font-bold tabular-nums text-sky-400">
+                    {scheduledSessionsCount} sesi
+                  </span>
                 </div>
-                <Meter label={`Long run terhadap syarat ${target}`} ratio={longRun / rule.longRunKm} />
+                <h3 className="mt-0.5 truncate font-display text-base font-bold text-white">
+                  {activeProgramTitle}
+                </h3>
               </div>
-            )}
-            {pen > 0 ? (
-              <div className="mt-4 rounded-2xl border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
-                Daya tahan belum cukup: waktu prediksi ditambah {(pen * 100).toFixed(1)}% (sekitar +{penMin.toFixed(0)} menit). Volume atau long run masih di bawah syarat.
+
+              <button
+                type="button"
+                onClick={() => setSessionModal({ mode: 'create' })}
+                className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-2xl bg-[#BEF264] px-4 text-xs font-extrabold text-[#09090B] transition hover:bg-[#d4fc82] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+              >
+                <Plus size={15} strokeWidth={2.5} aria-hidden />
+                <span>Input Sesi Program</span>
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.07] pt-3">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-400">
+                <Sparkles size={13} className="text-[#BEF264]" aria-hidden />
+                <span>Pilih Template Cepat</span>
               </div>
-            ) : rule ? (
-              <div className="mt-4 rounded-2xl border border-volt/25 bg-volt/10 p-3 text-sm text-volt">Syarat volume dan long run terpenuhi.</div>
-            ) : (
-              <div className="mt-4 text-sm text-slate-400">Tidak ada tambahan waktu karena daya tahan untuk {target}.</div>
-            )}
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Pilih template program cepat">
+                {PRESET_TEMPLATES.map((tpl) => {
+                  const isActive =
+                    tpl.id === 'empty'
+                      ? Boolean(st.customOnly && !(st.customSessions?.length || st.aiSessions?.length))
+                      : Boolean(st.customOnly && st.programTitle === tpl.matchTitle);
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() => handleApplyPreset(tpl.id)}
+                      className={`min-h-[40px] whitespace-nowrap rounded-xl border px-3 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                        isActive
+                          ? 'border-[#BEF264] bg-[#BEF264] text-[#09090B]'
+                          : tpl.id === 'empty'
+                            ? 'border-white/10 bg-[#18181D] text-zinc-300 hover:border-rose-400/40 hover:text-rose-300'
+                            : 'border-white/10 bg-[#18181D] text-zinc-200 hover:border-white/25 hover:text-white'
+                      }`}
+                    >
+                      {tpl.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </section>
 
+          <TrainingPlan
+            profile={profile}
+            workouts={workouts}
+            defaultK5Sec={preds['5K']?.finalSec ?? null}
+            currentPaceSecPerKm={currentPace}
+            startWeeklyKm={weeklyKm}
+            easyPaceSecPerKm={easyPace}
+            scheduleState={st}
+            onScheduleChange={updateSchedule}
+            onAddCustomSession={() => setSessionModal({ mode: 'create' })}
+            onEditCustomSession={(session) => setSessionModal({ mode: 'edit', session })}
+          />
         </div>
       )}
 
-      {tab === 'jadwal' && (
-        <div id="program-panel-jadwal" role="tabpanel" aria-labelledby="program-tab-jadwal">
-          <TrainingPlan profile={profile} workouts={workouts} defaultK5Sec={preds['5K']?.finalSec ?? null} currentPaceSecPerKm={currentPace} startWeeklyKm={weeklyKm} easyPaceSecPerKm={easyPace} curriculum={curriculum} />
+      {tab === 'analisa' && (
+        <div id="program-panel-analisa" role="tabpanel" aria-labelledby="program-tab-analisa">
+          <RaceDayCard
+            profile={profile}
+            workouts={workouts}
+            simDistance={simDistance}
+            simDateIso={simDateIso}
+            hideTargetControls
+          />
         </div>
+      )}
+
+      {targetModalOpen && (
+        <TargetRaceModal
+          profile={profile}
+          onClose={() => setTargetModalOpen(false)}
+          onSaved={onProfileChange}
+        />
+      )}
+
+      {sessionModal && (
+        <CustomSessionSheet
+          mode={sessionModal.mode}
+          initialSession={sessionModal.mode === 'edit' ? sessionModal.session : undefined}
+          defaultDate={todayIso}
+          maxHr={maxHr}
+          restingHr={profile.restingHr}
+          easyPaceSecPerKm={easyPace}
+          onClose={() => setSessionModal(null)}
+          onSave={handleSaveCustomSession}
+        />
       )}
     </div>
   );

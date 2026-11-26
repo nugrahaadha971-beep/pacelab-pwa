@@ -5,7 +5,7 @@ import type { CurriculumId } from './schedule.ts';
 
 export type PlanMode = 'auto' | CurriculumId;
 export const PLAN_MODES: readonly PlanMode[] = ['auto', 'progressive5k', 'nike5k', 'maf'];
-export const PLAN_LABEL: Record<CurriculumId, string> = { progressive5k: 'Progresif 5K (Lari-Jalan + HR-First)', nike5k: 'Nike 5K (Kontinu Berbasis Pace)', maf: 'MAF (Maffetone): Fondasi Aerobik' };
+export const PLAN_LABEL: Record<CurriculumId, string> = { progressive5k: 'Progresif 5K (Lari-Jalan + HR-First)', nike5k: 'Nike 5K (Kontinu Berbasis Pace)', maf: 'MAF (Maffetone): Fondasi Aerobik', custom: 'Program Latihan Kustom' };
 
 export const SLOW_5K_SEC = 2400; // ≥ 40:00 → Progresif
 export const MIN_WEEKLY_FREQ = 3; // < 3 sesi/minggu → Progresif

@@ -365,3 +365,117 @@ test('generateAiTrainingPlan mengirim generationConfig JSON, memvalidasi ketat, 
     (err: unknown) => err instanceof AiCoachError && err.code === 'invalid_json',
   );
 });
+
+test('buildProgramEvaluationPrompt, parseProgramEvaluationResponse, dan evaluateProgramResultsWithAi bekerja dan memvalidasi JSON ketat', async () => {
+  const {
+    buildProgramEvaluationPrompt,
+    parseProgramEvaluationResponse,
+    evaluateProgramResultsWithAi,
+  } = await import('./aiCoach.ts');
+  const now = Date.UTC(2026, 10, 22, 12, 0, 0);
+  const evalInput = {
+    profile: {
+      age: 34,
+      restingHr: 54,
+      maxHr: 186,
+      targetDistance: '5K' as const,
+      targetRaceDate: Date.UTC(2026, 11, 20),
+      targetTimeSec: 1500,
+    },
+    programTitle: 'Dasar 5K',
+    plannedSessions: [
+      {
+        date: '2026-11-20',
+        kind: 'recovery' as const,
+        name: 'Easy Run Aerobik',
+        status: 'done' as const,
+        targetDistanceKm: 4,
+        targetDurationMin: 28,
+        targetHr: [130, 148] as [number, number],
+      },
+      {
+        date: '2026-11-21',
+        kind: 'speed' as const,
+        name: 'Fartlek Ringan',
+        status: 'missed' as const,
+        targetDistanceKm: 4.5,
+        targetDurationMin: 30,
+        targetHr: [162, 174] as [number, number],
+      },
+    ],
+    workouts: [makeWorkout(1, 2)],
+    todayIso: '2026-11-22',
+    now,
+  };
+
+  const prompt = buildProgramEvaluationPrompt(evalInput);
+  assert.match(prompt, /Dasar 5K/);
+  assert.match(prompt, /1 selesai, 1 terlewat, 0 mendatang/);
+  assert.match(prompt, /Easy Run Aerobik/);
+
+  const parsed = parseProgramEvaluationResponse(
+    JSON.stringify({
+      complianceScore: 78.6,
+      summary: '**Konsistensi** cukup baik walau satu sesi speed terlewat.',
+      analysisPoints: [
+        '- **Volume**: Jarak mingguan terjaga.',
+        '2. HR rata-rata sesuai zona mudah.',
+        'Satu sesi kecepatan terlewat akhir pekan.',
+      ],
+      nextAdjustments: ['Pertahankan 3 sesi mudah minggu depan', 'Pindahkan interval ke Selasa'],
+    }),
+  );
+  assert.equal(parsed.complianceScore, 79);
+  assert.equal(parsed.summary, 'Konsistensi cukup baik walau satu sesi speed terlewat.');
+  assert.deepEqual(parsed.analysisPoints, [
+    'Volume: Jarak mingguan terjaga.',
+    'HR rata-rata sesuai zona mudah.',
+    'Satu sesi kecepatan terlewat akhir pekan.',
+  ]);
+
+  let capturedConfig: unknown = null;
+  const okFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { generationConfig?: unknown };
+    capturedConfig = body.generationConfig;
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    complianceScore: 84,
+                    summary: 'Eksekusi program sangat stabil sepanjang minggu.',
+                    analysisPoints: [
+                      'Target jarak tercapai sesuai rencana.',
+                      'Detak jantung stabil di zona target.',
+                      'Pemulihan antar sesi berjalan baik.',
+                    ],
+                    nextAdjustments: ['Tambahkan durasi long run +5 menit'],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }) as typeof fetch;
+
+  const evalRes = await evaluateProgramResultsWithAi(evalInput, {
+    apiKey: 'AIzaDemo',
+    isOnline: true,
+    fetchImpl: okFetch,
+  });
+  assert.deepEqual(capturedConfig, { responseMimeType: 'application/json', temperature: 0.3 });
+  assert.equal(evalRes.complianceScore, 84);
+  assert.equal(evalRes.nextAdjustments.length, 1);
+
+  assert.throws(
+    () => parseProgramEvaluationResponse('{bukan json'),
+    (err: unknown) => err instanceof AiCoachError && err.code === 'invalid_json',
+  );
+});
+

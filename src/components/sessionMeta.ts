@@ -7,10 +7,10 @@ export const KIND_LABEL: Record<PlanSession['kind'], string> = {
   race: 'Hari Lomba',
 };
 
-/** Garis kategori di tepi kiri kartu: Easy Volt Lime, Long Run sky, Speed/Race Hyper Coral. */
+/** Garis kategori di tepi kiri kartu: Easy Electric Lime, Long Run Cyan, Speed Rose, Race Amber. */
 export const KIND_BORDER: Record<PlanSession['kind'], string> = {
-  recovery: 'border-l-volt',
+  recovery: 'border-l-[#BEF264]',
   long: 'border-l-sky-400',
-  speed: 'border-l-coral',
-  race: 'border-l-coral',
+  speed: 'border-l-rose-500',
+  race: 'border-l-amber-400',
 };

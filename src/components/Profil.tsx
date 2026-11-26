@@ -30,16 +30,20 @@ interface Errs { age?: string; restingHr?: string; maxHr?: string; targetTime?: 
 
 function Notice({ msg }: { msg: Msg }) {
   return msg.ok ? (
-    <p role="status" className="rounded-2xl border border-volt/25 bg-volt/10 px-3 py-2 text-sm font-semibold text-volt">✓ {msg.text}</p>
+    <p role="status" className="rounded-2xl border border-[#BEF264]/25 bg-[#BEF264]/10 px-3 py-2 text-sm font-semibold text-[#BEF264]">
+      ✓ {msg.text}
+    </p>
   ) : (
-    <p role="alert" className="rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">{msg.text}</p>
+    <p role="alert" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-400">
+      {msg.text}
+    </p>
   );
 }
 
-const SHOE_BAR_STYLE: Record<ShoeStatus, { bar: string; pill: string; badgeText: string }> = {
-  good: { bar: 'bg-volt', pill: 'good', badgeText: 'Masih nyaman' },
-  warn: { bar: 'bg-amber-400', pill: 'warn', badgeText: 'Hampir habis' },
-  replace: { bar: 'bg-coral', pill: 'bad', badgeText: 'Perlu ganti' },
+const SHOE_BAR_STYLE: Record<ShoeStatus, { bar: string; badgeText: string }> = {
+  good: { bar: 'bg-[#BEF264]', badgeText: 'Masih nyaman' },
+  warn: { bar: 'bg-amber-400', badgeText: 'Hampir habis' },
+  replace: { bar: 'bg-rose-500', badgeText: 'Perlu ganti' },
 };
 
 export default function Profil({ profile, workouts = [], onSaved }: { profile: UserProfile | null; workouts?: Workout[]; onSaved: () => void }) {
@@ -47,7 +51,6 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
   const [backupMsg, setBackupMsg] = useState<Msg | null>(null);
   const [errs, setErrs] = useState<Errs>({});
   const [age, setAge] = useState(profile?.age ?? 0);
-  // Otomatis hanya bila profil baru, atau Max HR tersimpan memang sama dengan hasil Tanaka.
   const [auto, setAuto] = useState(() => !profile || profile.maxHr === tanakaMaxHr(profile.age));
   const [maxHrText, setMaxHrText] = useState(String(profile?.maxHr ?? ''));
   const [pendingImport, setPendingImport] = useState<File | null>(null);
@@ -75,11 +78,11 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     const weekly = weeklyRaw === '' ? undefined : Number(weeklyRaw);
 
     const next: Errs = {};
-    if (!(age > 0)) next.age = 'Isi usia dengan angka lebih dari 0.';
-    if (!(restingHr > 30)) next.restingHr = 'Detak jantung istirahat harus lebih dari 30 bpm.';
-    if (!(maxHr > restingHr)) next.maxHr = 'Detak jantung maksimal harus lebih tinggi dari detak jantung istirahat.';
-    if (targetTimeSec == null) next.targetTime = 'Isi dengan format jam:menit:detik, contoh 00:50:00.';
-    if (weekly !== undefined && !(weekly > 0)) next.weeklyTargetKm = 'Isi dengan angka lebih dari 0, atau kosongkan.';
+    if (!(age > 0)) next.age = 'Isi usia lebih dari 0.';
+    if (!(restingHr > 30)) next.restingHr = 'Resting HR harus lebih dari 30 bpm.';
+    if (!(maxHr > restingHr)) next.maxHr = 'Max HR harus lebih tinggi dari Resting HR.';
+    if (targetTimeSec == null) next.targetTime = 'Format jam:menit:detik, contoh 00:50:00.';
+    if (weekly !== undefined && !(weekly > 0)) next.weeklyTargetKm = 'Isi angka lebih dari 0, atau kosongkan.';
     setErrs(next);
     setFormMsg(null);
     if (Object.keys(next).length > 0 || targetTimeSec == null) return;
@@ -96,7 +99,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
       setFormMsg({ text: err instanceof Error ? err.message : 'Gagal menyimpan profil.', ok: false });
       return;
     }
-    setFormMsg({ text: 'Profil tersimpan. Zona latihan dan target diperbarui.', ok: true });
+    setFormMsg({ text: 'Profil & target diperbarui.', ok: true });
     onSaved();
   };
 
@@ -111,7 +114,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
   const pickImport = (e: ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
     const file = input.files?.[0];
-    input.value = ''; // agar berkas yang sama bisa dipilih lagi
+    input.value = '';
     if (file) setPendingImport(file);
   };
 
@@ -121,11 +124,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     if (!file) return;
     try {
       const r = await importBackup(await file.text());
-      const parts = [`${r.workouts} sesi dipulihkan`];
-      if (r.skipped) parts.push(`${r.skipped} dilewati karena data rusak`);
-      if (r.profile) parts.push('profil dipulihkan');
-      if (r.schedule) parts.push('jadwal latihan dipulihkan');
-      setBackupMsg({ text: parts.join(', ') + '.', ok: true });
+      setBackupMsg({ text: `${r.workouts} sesi dipulihkan.`, ok: true });
       onSaved();
     } catch (err) {
       setBackupMsg({ text: err instanceof Error ? err.message : 'Gagal mengimpor.', ok: false });
@@ -148,7 +147,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
       saveGeminiApiKey(trimmed);
       setGeminiKey(trimmed);
       setHasGeminiKey(true);
-      setGeminiMsg({ text: 'API Key Gemini tersimpan secara lokal di browser ini.', ok: true });
+      setGeminiMsg({ text: 'API Key tersimpan secara lokal.', ok: true });
     } catch (err) {
       setGeminiMsg({ text: err instanceof Error ? err.message : 'Gagal menyimpan API Key.', ok: false });
     }
@@ -158,7 +157,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     clearGeminiApiKey();
     setGeminiKey('');
     setHasGeminiKey(false);
-    setGeminiMsg({ text: 'API Key Gemini dihapus dari perangkat ini.', ok: true });
+    setGeminiMsg({ text: 'API Key dihapus.', ok: true });
   };
 
   const activeShoeEntries = calcAllShoesMileage(workouts, shoes);
@@ -169,7 +168,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     const initVal = newShoeInitialKm.trim() === '' ? 0 : parseKmInput(newShoeInitialKm);
     const maxVal = newShoeMaxKm.trim() === '' ? DEFAULT_MAX_KM : parseKmInput(newShoeMaxKm);
     if (!trimmedName) {
-      setShoeMsg({ text: 'Masukkan nama sepatu terlebih dahulu.', ok: false });
+      setShoeMsg({ text: 'Masukkan nama sepatu.', ok: false });
       return;
     }
     if (initVal === null || initVal < 0) {
@@ -186,7 +185,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     setNewShoeInitialKm('0');
     setNewShoeMaxKm(String(DEFAULT_MAX_KM));
     setShowAddShoe(false);
-    setShoeMsg({ text: `Sepatu "${trimmedName}" ditambahkan (${initVal.toFixed(2)} km).`, ok: true });
+    setShoeMsg({ text: `Sepatu "${trimmedName}" ditambahkan.`, ok: true });
   };
 
   const handleOpenEditKm = (id: string, currentInitialKm: number) => {
@@ -199,85 +198,115 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     e.preventDefault();
     const parsedKm = editingShoeKm.trim() === '' ? 0 : parseKmInput(editingShoeKm);
     if (parsedKm === null || parsedKm < 0) {
-      setShoeMsg({ text: 'Km awal harus berupa angka 0 atau lebih.', ok: false });
+      setShoeMsg({ text: 'Km awal harus angka 0 atau lebih.', ok: false });
       return;
     }
     const updated = saveShoes(updateShoeKm(shoes, id, parsedKm));
     setShoes(updated);
     setEditingShoeId(null);
     setEditingShoeKm('');
-    setShoeMsg({ text: `Jarak awal "${shoeName}" diperbarui menjadi ${parsedKm.toFixed(2)} km.`, ok: true });
+    setShoeMsg({ text: `Jarak awal "${shoeName}" diperbarui.`, ok: true });
   };
 
   const handleSetDefaultShoe = (id: string) => {
-    const updated = saveShoes(setDefaultShoe(shoes, id));
-    setShoes(updated);
+    setShoes(saveShoes(setDefaultShoe(shoes, id)));
     setShoeMsg({ text: 'Sepatu utama diperbarui.', ok: true });
   };
 
   const handleRetireShoe = (id: string) => {
-    const updated = saveShoes(retireShoe(shoes, id));
-    setShoes(updated);
+    setShoes(saveShoes(retireShoe(shoes, id)));
     if (editingShoeId === id) setEditingShoeId(null);
-    setShoeMsg({ text: 'Sepatu dipensiunkan dari daftar aktif.', ok: true });
+    setShoeMsg({ text: 'Sepatu dipensiunkan.', ok: true });
   };
 
   const handleDeleteShoe = (id: string) => {
-    const updated = saveShoes(deleteShoe(shoes, id));
-    setShoes(updated);
+    setShoes(saveShoes(deleteShoe(shoes, id)));
     if (editingShoeId === id) setEditingShoeId(null);
-    setShoeMsg({ text: 'Sepatu dihapus dari daftar.', ok: true });
+    setShoeMsg({ text: 'Sepatu dihapus.', ok: true });
   };
 
   return (
     <div className="space-y-4">
       <ScreenHeader
-        title={profile ? 'Profil & Pengaturan' : 'Atur profil dulu'}
-        subtitle={profile ? 'Data diri, Pelatih AI, dan cadangan perangkat' : undefined}
+        title={profile ? 'Profil & Pengaturan' : 'Atur Profil'}
+        subtitle={profile ? 'Data fisiologis, target lomba & preferensi' : undefined}
       />
       {!profile && (
-        <p className="text-sm text-slate-300">
-          Isi data berikut agar Kondisi Beban Tubuh, target detak jantung, dan prediksi lomba bisa dihitung. Semua data tersimpan lokal di perangkat ini.
+        <p className="text-sm text-zinc-300">
+          Lengkapi data berikut untuk mengaktifkan zona detak jantung dan target latihan.
         </p>
       )}
 
       {/* Kartu 1: Data Diri & Target Lomba */}
-      <form onSubmit={save} noValidate className="space-y-4 sport-card p-4" aria-labelledby="profil-data-judul">
-        <h2 id="profil-data-judul" className="font-display text-base font-bold text-white">1. Data Diri &amp; Target Lomba</h2>
+      <form onSubmit={save} noValidate className="space-y-4 sport-card p-5" aria-labelledby="profil-data-judul">
+        <h2 id="profil-data-judul" className="font-display text-base font-bold text-white">1. Data Diri & Target Lomba</h2>
 
-        <Field label="Usia" hint="Tahun" type="number" inputMode="numeric" value={age || ''} onChange={(e) => setAge(Number(e.target.value))} error={errs.age} />
-        <Field label="Detak jantung istirahat" term="Resting HR, bpm" hint="Ukur saat bangun tidur sebelum beranjak dari kasur." name="restingHr" type="number" inputMode="numeric"
-          defaultValue={profile?.restingHr} error={errs.restingHr} />
-        <label className="flex min-h-11 items-center gap-3 text-sm font-semibold text-slate-200">
-          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="h-5 w-5 accent-volt" />
-          Hitung detak jantung maksimal otomatis (rumus Tanaka)
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Usia" hint="Tahun" type="number" inputMode="numeric" value={age || ''} onChange={(e) => setAge(Number(e.target.value))} error={errs.age} />
+          <Field label="Resting HR" term="bpm" name="restingHr" type="number" inputMode="numeric" defaultValue={profile?.restingHr} error={errs.restingHr} />
+        </div>
+
+        <label className="flex min-h-[44px] items-center gap-3 text-sm font-semibold text-zinc-200">
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="h-5 w-5 accent-[#BEF264]" />
+          Hitung Max HR otomatis (Tanaka)
         </label>
-        <Field label="Detak jantung maksimal" term="Max HR, bpm" type="number" inputMode="numeric" disabled={auto}
-          value={auto ? (age > 0 ? String(tanakaMaxHr(age)) : '') : maxHrText} onChange={(e) => setMaxHrText(e.target.value)} error={errs.maxHr} />
-        <SelectField label="Jarak lomba target" name="target" defaultValue={profile?.targetDistance ?? '10K'}>
-          {DISTANCES.map((d) => <option key={d}>{d}</option>)}
-        </SelectField>
-        <Field label="Tanggal lomba" hint="Boleh dikosongkan dan diisi nanti di tab Program." name="raceDate" type="date"
-          defaultValue={profile?.targetRaceDate ? new Date(profile.targetRaceDate).toISOString().slice(0, 10) : ''} />
-        <Field label="Target waktu lomba" hint="jam:menit:detik, contoh 00:50:00" name="targetTime" placeholder="00:50:00" autoComplete="off"
-          defaultValue={profile ? fmtHms(profile.targetTimeSec) : ''} error={errs.targetTime} />
-        <Field label="Target jarak mingguan" term="km" hint="Boleh dikosongkan. Contoh 30 atau 32,5." name="weeklyTargetKm" inputMode="decimal" autoComplete="off"
-          defaultValue={profile?.weeklyTargetKm} error={errs.weeklyTargetKm} />
+
+        <Field
+          label="Max HR"
+          term="bpm"
+          type="number"
+          inputMode="numeric"
+          disabled={auto}
+          value={auto ? (age > 0 ? String(tanakaMaxHr(age)) : '') : maxHrText}
+          onChange={(e) => setMaxHrText(e.target.value)}
+          error={errs.maxHr}
+        />
+
+        <div className="grid grid-cols-2 gap-3">
+          <SelectField label="Jarak Target" name="target" defaultValue={profile?.targetDistance ?? '10K'}>
+            {DISTANCES.map((d) => <option key={d}>{d}</option>)}
+          </SelectField>
+          <Field
+            label="Tanggal Lomba"
+            name="raceDate"
+            type="date"
+            defaultValue={profile?.targetRaceDate ? new Date(profile.targetRaceDate).toISOString().slice(0, 10) : ''}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="Target Waktu"
+            hint="HH:MM:SS"
+            name="targetTime"
+            placeholder="00:50:00"
+            autoComplete="off"
+            defaultValue={profile ? fmtHms(profile.targetTimeSec) : ''}
+            error={errs.targetTime}
+          />
+          <Field
+            label="Target Mingguan"
+            term="km"
+            name="weeklyTargetKm"
+            inputMode="decimal"
+            autoComplete="off"
+            defaultValue={profile?.weeklyTargetKm}
+            error={errs.weeklyTargetKm}
+          />
+        </div>
+
         {formMsg && <Notice msg={formMsg} />}
         <PrimaryButton type="submit">Simpan profil</PrimaryButton>
       </form>
 
       {/* Kartu 2: Pelatih AI (Gemini) */}
-      <section className="space-y-3 sport-card p-4" aria-labelledby="gemini-coach-judul">
+      <section className="space-y-3 sport-card p-5" aria-labelledby="gemini-coach-judul">
         <div className="flex items-center justify-between gap-2">
           <h2 id="gemini-coach-judul" className="font-display text-base font-bold text-white">2. Pelatih AI (Gemini)</h2>
           <StatusPill tone={hasGeminiKey ? 'good' : 'info'}>
-            {hasGeminiKey ? 'Key tersimpan' : 'Belum diatur'}
+            {hasGeminiKey ? 'Aktif' : 'Belum diatur'}
           </StatusPill>
         </div>
-        <p className="text-sm text-slate-400">
-          Opsional. API Key hanya disimpan di browser perangkat ini dan tidak pernah ikut di file cadangan.
-        </p>
         <Field
           label="Gemini API Key"
           type="password"
@@ -285,44 +314,42 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
           placeholder="AIza..."
           value={geminiKey}
           onChange={(e) => setGeminiKey(e.target.value)}
-          hint="Dipakai saat Anda menekan tombol Tanya Pelatih AI di Beranda atau Susun Jadwal dengan AI di tab Program."
+          hint="Tersimpan lokal di perangkat ini."
         />
         <div className="grid grid-cols-2 gap-2">
           <Button variant="secondary" onClick={saveGemini}>Simpan</Button>
-          <Button variant="danger" onClick={removeGemini} disabled={!hasGeminiKey && !geminiKey.trim()}>Hapus Key</Button>
+          <Button variant="danger" onClick={removeGemini} disabled={!hasGeminiKey && !geminiKey.trim()}>Hapus</Button>
         </div>
         {geminiMsg && <Notice msg={geminiMsg} />}
       </section>
 
-      {/* Kartu 3: Sepatu Lari (Multi-Shoe Rotation) */}
-      <section className="space-y-3 sport-card p-4" aria-labelledby="shoe-tracker-judul">
+      {/* Kartu 3: Sepatu Lari */}
+      <section className="space-y-3 sport-card p-5" aria-labelledby="shoe-tracker-judul">
         <div className="flex items-center justify-between gap-2">
           <h2 id="shoe-tracker-judul" className="font-display text-base font-bold text-white">3. Sepatu Lari</h2>
           <Button
             variant="secondary"
             block={false}
             onClick={() => { setShowAddShoe((v) => !v); setShoeMsg(null); }}
-            className="min-h-9 px-3 py-1.5 text-xs"
+            className="px-3.5 text-xs"
           >
-            {showAddShoe ? 'Tutup Form' : '+ Tambah Sepatu Baru'}
+            {showAddShoe ? 'Tutup' : '+ Tambah'}
           </Button>
         </div>
 
         {activeShoeEntries.length === 0 ? (
-          <p className="sport-subcard p-3 text-xs text-slate-400">
-            Belum ada sepatu aktif. Tambahkan sepatu di bawah untuk mulai melacak jarak tempuh tiap rotasi.
-          </p>
+          <p className="sport-subcard p-3 text-xs text-zinc-400">Belum ada sepatu aktif.</p>
         ) : (
           <div className="space-y-2.5">
             {activeShoeEntries.map((entry) => {
               const style = SHOE_BAR_STYLE[entry.status];
               return (
-                <div key={entry.shoe.id} className="sport-subcard space-y-2.5 p-3">
+                <div key={entry.shoe.id} className="sport-subcard space-y-2.5 p-3.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="truncate font-display text-sm font-bold text-white">{entry.shoe.name}</span>
                       {entry.shoe.isDefault && (
-                        <span className="shrink-0 rounded-full bg-volt/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-volt">
+                        <span className="shrink-0 rounded-full bg-[#BEF264]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#BEF264]">
                           Utama
                         </span>
                       )}
@@ -334,10 +361,10 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
 
                   <div>
                     <div className="flex items-baseline justify-between gap-2 text-xs">
-                      <span className="font-mono font-bold text-slate-100">
-                        {entry.totalKm.toFixed(2)} / {entry.shoe.maxKm} km
+                      <span className="font-mono font-bold tabular-nums text-zinc-100">
+                        {entry.totalKm.toFixed(1)} / {entry.shoe.maxKm} km
                       </span>
-                      <span className="font-mono text-slate-400">{Math.min(100, Math.round(entry.pct))}%</span>
+                      <span className="font-mono tabular-nums text-zinc-400">{Math.min(100, Math.round(entry.pct))}%</span>
                     </div>
                     <div
                       role="progressbar"
@@ -345,43 +372,40 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-valuenow={Math.min(100, Math.round(entry.pct))}
-                      className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-[#272A35]"
+                      className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-[#27272E]"
                     >
                       <div
                         className={`h-full rounded-full transition-all duration-300 ${style.bar}`}
                         style={{ width: `${Math.min(100, Math.max(0, entry.pct))}%` }}
                       />
                     </div>
-                    <p className="mt-1.5 text-xs text-slate-400">
-                      {entry.status === 'good'
-                        ? `Tersisa ${entry.remainingKm.toFixed(2)} km sebelum batas pakai.`
-                        : `${SHOE_STATUS_TEXT[entry.status]}${entry.remainingKm > 0 ? ` (sisa ${entry.remainingKm.toFixed(2)} km).` : '.'}`}
-                    </p>
+                    {entry.status !== 'good' && (
+                      <p className="mt-1 text-xs text-zinc-400">{SHOE_STATUS_TEXT[entry.status]}</p>
+                    )}
                   </div>
 
                   {editingShoeId === entry.shoe.id && (
                     <form
                       onSubmit={(e) => handleSaveEditKm(e, entry.shoe.id, entry.shoe.name)}
                       noValidate
-                      className="space-y-2 rounded-xl border border-white/10 bg-[#111216] p-2.5"
+                      className="space-y-2 rounded-xl border border-white/10 bg-[#121215] p-3"
                     >
                       <Field
-                        label="Km Awal Sepatu"
+                        label="Km Awal"
                         inputMode="decimal"
                         value={editingShoeKm}
                         onChange={(e) => { setEditingShoeKm(e.target.value); setShoeMsg(null); }}
-                        hint={entry.loggedKm > 0 ? `+ ${entry.loggedKm.toFixed(2)} km dari sesi lari tertaut` : 'Contoh: 2.19 atau 2,19'}
                       />
                       <div className="flex gap-2">
-                        <Button type="submit" variant="primary" block={false} className="min-h-9 px-3 py-1.5 text-xs">
-                          Simpan KM
+                        <Button type="submit" variant="primary" block={false} className="min-h-[44px] px-4 text-xs">
+                          Simpan
                         </Button>
                         <Button
                           type="button"
                           variant="secondary"
                           block={false}
                           onClick={() => { setEditingShoeId(null); setEditingShoeKm(''); }}
-                          className="min-h-9 px-3 py-1.5 text-xs"
+                          className="min-h-[44px] px-4 text-xs"
                         >
                           Batal
                         </Button>
@@ -390,38 +414,18 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
                   )}
 
                   <div className="flex flex-wrap gap-2 pt-0.5">
-                    <Button
-                      variant="secondary"
-                      block={false}
-                      onClick={() => handleOpenEditKm(entry.shoe.id, entry.shoe.initialKm)}
-                      className="min-h-9 px-3 py-1.5 text-xs"
-                    >
+                    <Button variant="secondary" block={false} onClick={() => handleOpenEditKm(entry.shoe.id, entry.shoe.initialKm)} className="px-3 text-xs">
                       Edit KM
                     </Button>
                     {!entry.shoe.isDefault && (
-                      <Button
-                        variant="secondary"
-                        block={false}
-                        onClick={() => handleSetDefaultShoe(entry.shoe.id)}
-                        className="min-h-9 px-3 py-1.5 text-xs"
-                      >
-                        Jadikan Utama
+                      <Button variant="secondary" block={false} onClick={() => handleSetDefaultShoe(entry.shoe.id)} className="px-3 text-xs">
+                        Utama
                       </Button>
                     )}
-                    <Button
-                      variant="secondary"
-                      block={false}
-                      onClick={() => handleRetireShoe(entry.shoe.id)}
-                      className="min-h-9 px-3 py-1.5 text-xs"
-                    >
-                      Pensiunkan
+                    <Button variant="secondary" block={false} onClick={() => handleRetireShoe(entry.shoe.id)} className="px-3 text-xs">
+                      Pensiun
                     </Button>
-                    <Button
-                      variant="danger"
-                      block={false}
-                      onClick={() => handleDeleteShoe(entry.shoe.id)}
-                      className="min-h-9 px-3 py-1.5 text-xs"
-                    >
+                    <Button variant="danger" block={false} onClick={() => handleDeleteShoe(entry.shoe.id)} className="px-3 text-xs">
                       Hapus
                     </Button>
                   </div>
@@ -432,8 +436,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
         )}
 
         {showAddShoe && (
-          <form onSubmit={handleAddShoe} noValidate className="space-y-3 rounded-2xl border border-white/[0.08] bg-[#191B22]/80 p-3">
-            <div className="text-xs font-bold uppercase tracking-wider text-volt">+ Tambah Sepatu Baru</div>
+          <form onSubmit={handleAddShoe} noValidate className="space-y-3 rounded-2xl border border-white/[0.08] bg-[#18181D]/80 p-3.5">
             <Field
               label="Nama Sepatu"
               placeholder="ASICS Gel-Cumulus 28"
@@ -441,50 +444,33 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
               onChange={(e) => { setNewShoeName(e.target.value); setShoeMsg(null); }}
             />
             <div className="grid grid-cols-2 gap-3">
-              <Field
-                label="Km Awal"
-                inputMode="decimal"
-                value={newShoeInitialKm}
-                onChange={(e) => { setNewShoeInitialKm(e.target.value); setShoeMsg(null); }}
-              />
-              <Field
-                label="Maks Km"
-                inputMode="decimal"
-                value={newShoeMaxKm}
-                onChange={(e) => { setNewShoeMaxKm(e.target.value); setShoeMsg(null); }}
-              />
+              <Field label="Km Awal" inputMode="decimal" value={newShoeInitialKm} onChange={(e) => { setNewShoeInitialKm(e.target.value); setShoeMsg(null); }} />
+              <Field label="Maks Km" inputMode="decimal" value={newShoeMaxKm} onChange={(e) => { setNewShoeMaxKm(e.target.value); setShoeMsg(null); }} />
             </div>
-            <Button type="submit" variant="primary">Simpan Sepatu Baru</Button>
+            <Button type="submit" variant="primary">Simpan Sepatu</Button>
           </form>
         )}
 
         {shoeMsg && <Notice msg={shoeMsg} />}
       </section>
 
-      {/* Kartu 4: Cadangan & Reset Data (terlipat) */}
-      <details className="group sport-card p-4">
-        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 font-display text-base font-bold text-white">
-          <span>4. Cadangan &amp; Reset Data</span>
-          <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" aria-hidden />
+      {/* Kartu 4: Cadangan & Reset Data */}
+      <details className="group sport-card p-5">
+        <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-2 font-display text-base font-bold text-white">
+          <span>4. Cadangan & Reset Data</span>
+          <ChevronDown className="h-4 w-4 text-zinc-400 transition-transform group-open:rotate-180" aria-hidden />
         </summary>
 
-        <div className="mt-3 space-y-4 border-t border-white/[0.06] pt-3">
-          <div className="space-y-3">
-            <p className="text-sm text-slate-400">
-              Cadangan berisi seluruh sesi lari, jadwal, dan profil. Karena semua data tersimpan lokal di browser ini, buat cadangan secara berkala.
-            </p>
-            <Button variant="secondary" onClick={exportJson}>Ekspor cadangan (.json)</Button>
-            <label className="flex min-h-11 w-full cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 px-4 py-2 text-sm font-semibold text-slate-300 focus-within:ring-2 focus-within:ring-volt">
-              Pulihkan dari cadangan (.json)
-              <input type="file" accept=".json" onChange={pickImport} className="sr-only" />
-            </label>
-            {backupMsg && <Notice msg={backupMsg} />}
-          </div>
+        <div className="mt-3 space-y-3 border-t border-white/[0.06] pt-3">
+          <Button variant="secondary" onClick={exportJson}>Ekspor cadangan (.json)</Button>
+          <label className="flex min-h-[44px] w-full cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 px-4 py-2 text-sm font-semibold text-zinc-300 focus-within:ring-2 focus-within:ring-[#BEF264]">
+            Pulihkan dari cadangan (.json)
+            <input type="file" accept=".json" onChange={pickImport} className="sr-only" />
+          </label>
+          {backupMsg && <Notice msg={backupMsg} />}
 
           {profile && (
-            <div className="space-y-3 border-t border-red-500/20 pt-3">
-              <h3 className="text-sm font-bold text-red-300">Reset Data Lokal</h3>
-              <p className="text-xs text-slate-400">Menghapus semua sesi dan profil dari perangkat ini. Ekspor cadangan dulu bila perlu.</p>
+            <div className="border-t border-rose-500/20 pt-3">
               <Button variant="danger" onClick={() => setAskWipe(true)}>Hapus semua data lokal</Button>
             </div>
           )}
@@ -498,7 +484,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
       )}
       {askWipe && (
         <ConfirmDialog id="hapus-semua" title="Hapus semua data?" confirmLabel="Hapus semua" onConfirm={wipe} onCancel={() => setAskWipe(false)}>
-          <p>Semua sesi dan profil di perangkat ini akan dihapus. Tindakan ini tidak bisa dibatalkan.</p>
+          <p>Semua sesi dan profil di perangkat ini akan dihapus permanen.</p>
         </ConfirmDialog>
       )}
     </div>

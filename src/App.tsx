@@ -23,13 +23,7 @@ const RIGHT_TABS = [
   { id: 'riwayat', label: 'Riwayat', Icon: History },
 ] as const;
 
-const SIDEBAR_TABS = [
-  { id: 'beranda', label: 'Beranda', Icon: Home },
-  { id: 'program', label: 'Program', Icon: CalendarDays },
-  { id: 'analitik', label: 'Analitik', Icon: BarChart3 },
-  { id: 'riwayat', label: 'Riwayat', Icon: History },
-  { id: 'profil', label: 'Profil', Icon: User },
-] as const;
+const MAIN_TABS = [...LEFT_TABS, ...RIGHT_TABS] as const;
 
 export default function App() {
   const [tab, setTab] = useState<AppTab>('beranda');
@@ -74,7 +68,7 @@ export default function App() {
 
   return (
     <div className="min-h-dvh bg-[#09090B] text-zinc-100">
-      {/* Desktop Left Sidebar (>= 768px) */}
+      {/* Desktop Left Sidebar (>= 768px): 4 Tab Utama + CTA Catat Lari */}
       <aside
         aria-label="Navigasi desktop"
         className="hidden md:fixed md:inset-y-0 md:left-0 md:z-30 md:flex md:w-60 md:flex-col md:border-r md:border-white/10 md:bg-[#0B0B0E]/90 md:backdrop-blur-md lg:w-64"
@@ -97,12 +91,12 @@ export default function App() {
             className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl bg-[#BEF264] px-4 font-display text-sm font-extrabold text-[#09090B] shadow-[0_0_24px_rgba(190,242,100,0.2)] transition duration-150 hover:bg-[#d4fc82] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090B]"
           >
             <Plus size={18} strokeWidth={2.6} aria-hidden />
-            <span className="whitespace-nowrap">Catat Sesi</span>
+            <span className="whitespace-nowrap">Catat Lari</span>
           </button>
         </div>
 
         <nav aria-label="Menu utama" className="flex-1 space-y-1 px-3">
-          {SIDEBAR_TABS.map(({ id, label, Icon }) => {
+          {MAIN_TABS.map(({ id, label, Icon }) => {
             const active = tab === id;
             return (
               <button
@@ -125,19 +119,16 @@ export default function App() {
 
         <div className="border-t border-white/10 p-4">
           <div className="rounded-2xl border border-white/[0.07] bg-[#121215] px-3.5 py-3 text-xs">
-            <div className="font-semibold text-zinc-300">Target Lomba</div>
+            <div className="text-[11px] font-medium text-zinc-400">Target Lomba</div>
             <div className="mt-1 flex items-baseline justify-between gap-2 tabular-nums">
               <span className="font-mono text-sm font-bold text-[#BEF264]">{profile.targetDistance}</span>
               <span className="font-mono text-zinc-200">{fmtHms(profile.targetTimeSec)}</span>
-            </div>
-            <div className="mt-1.5 text-[11px] tabular-nums text-zinc-500">
-              HR {profile.restingHr}–{profile.maxHr} bpm · {workouts.length} sesi
             </div>
           </div>
         </div>
       </aside>
 
-      {/* Mobile Top Header (< 768px) */}
+      {/* Mobile Top Header (< 768px) — Logo + Ikon Profil Pojok Kanan Atas */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#09090B]/85 backdrop-blur-md md:hidden">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
           <button
@@ -153,26 +144,42 @@ export default function App() {
             onClick={() => setTab('profil')}
             aria-label="Profil"
             aria-current={tab === 'profil' ? 'page' : undefined}
-            className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+            className={`inline-flex h-11 w-11 items-center justify-center rounded-full border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
               tab === 'profil'
-                ? 'border-[#BEF264]/45 bg-[#BEF264]/12 text-[#BEF264]'
+                ? 'border-[#BEF264]/45 bg-[#BEF264]/15 text-[#BEF264]'
                 : 'border-white/10 bg-[#121215] text-zinc-300 hover:border-white/20 hover:text-white'
             }`}
           >
-            <User size={15} aria-hidden />
-            <span className="whitespace-nowrap">Profil</span>
+            <User size={18} aria-hidden />
           </button>
         </div>
       </header>
 
       {/* Main Content Canvas */}
       <div className="md:pl-60 lg:pl-64">
-        <main className="mx-auto w-full max-w-7xl px-4 pb-28 pt-5 sm:px-6 md:pb-12 md:pt-7 lg:px-8">
+        {/* Desktop Top Utility Bar (>= 768px) — Ikon Profil Pojok Kanan Atas */}
+        <header className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b border-white/10 bg-[#09090B]/85 px-6 backdrop-blur-md md:flex lg:px-8">
+          <button
+            type="button"
+            onClick={() => setTab('profil')}
+            aria-label="Profil & Pengaturan"
+            aria-current={tab === 'profil' ? 'page' : undefined}
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-full border px-3.5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+              tab === 'profil'
+                ? 'border-[#BEF264]/45 bg-[#BEF264]/15 text-[#BEF264]'
+                : 'border-white/10 bg-[#121215] text-zinc-300 hover:border-white/20 hover:text-white'
+            }`}
+          >
+            <User size={15} aria-hidden />
+            <span className="whitespace-nowrap">Profil</span>
+          </button>
+        </header>
+
+        <main className="mx-auto w-full max-w-7xl px-4 pb-28 pt-5 sm:px-6 md:pb-12 md:pt-6 lg:px-8">
           {tab === 'beranda' && (
             <Beranda
               profile={profile}
               workouts={workouts}
-              onOpenCatat={() => setCatatOpen(true)}
               onNavigate={setTab}
             />
           )}
@@ -184,7 +191,7 @@ export default function App() {
           {tab === 'analitik' && <Analitik profile={profile} workouts={workouts} />}
           {tab === 'riwayat' && (
             <div className="mx-auto max-w-4xl">
-              <Riwayat workouts={workouts} reload={reload} />
+              <Riwayat profile={profile} workouts={workouts} reload={reload} />
             </div>
           )}
           {tab === 'profil' && (
@@ -197,7 +204,7 @@ export default function App() {
 
       <CatatSheet profile={profile} open={catatOpen} onClose={() => setCatatOpen(false)} onSaved={reload} />
 
-      {/* Mobile Fixed Bottom Navigation Bar (< 768px) */}
+      {/* Mobile Fixed Bottom Navigation Bar (< 768px): 4 Tab + 1 Tombol Tengah (+) */}
       <div
         className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#09090B]/90 backdrop-blur-md md:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
@@ -232,7 +239,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setCatatOpen(true)}
-              aria-label="Catat sesi"
+              aria-label="Catat lari"
               className="flex h-12 w-12 items-center justify-center rounded-full bg-[#BEF264] text-[#09090B] shadow-[0_0_20px_rgba(190,242,100,0.35)] transition active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090B]"
             >
               <Plus size={24} strokeWidth={2.75} aria-hidden />

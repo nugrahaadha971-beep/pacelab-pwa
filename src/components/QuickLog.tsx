@@ -11,14 +11,13 @@ import { todayStr } from './format';
 import { Field, PrimaryButton, SegmentedTabs, SelectField } from './ui';
 
 const TYPES: { id: WorkoutType; label: string; desc: string }[] = [
-  { id: 'easy', label: 'Easy', desc: 'Santai, masih bisa ngobrol' },
-  { id: 'long_run', label: 'Long run', desc: 'Jarak jauh santai' },
+  { id: 'easy', label: 'Easy', desc: 'Santai & aerobik' },
+  { id: 'long_run', label: 'Long Run', desc: 'Jarak jauh santai' },
   { id: 'tempo', label: 'Tempo', desc: 'Cepat stabil' },
-  { id: 'interval', label: 'Interval', desc: 'Lari cepat diselingi jalan' },
-  { id: 'race', label: 'Race', desc: 'Lomba' },
+  { id: 'interval', label: 'Interval', desc: 'Ulangan cepat' },
+  { id: 'race', label: 'Race', desc: 'Hari lomba' },
 ];
 const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-/** Jeda sebelum sheet menutup otomatis setelah berhasil menyimpan. */
 const CLOSE_DELAY_MS = 1200;
 
 type Tab = 'manual' | 'impor';
@@ -26,22 +25,21 @@ interface Msg { text: string; ok: boolean }
 interface Errs { date?: string; duration?: string; distance?: string; rpe?: string }
 
 const chip = (on: boolean) =>
-  `flex min-h-11 flex-col items-start justify-center rounded-2xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
-    on ? 'border-volt/70 bg-volt/10 text-white' : 'border-white/10 bg-[#191B22] text-slate-200 hover:border-white/20'
+  `flex min-h-[44px] flex-col items-start justify-center rounded-2xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+    on ? 'border-[#BEF264]/70 bg-[#BEF264]/10 text-white' : 'border-white/10 bg-[#18181D] text-zinc-200 hover:border-white/20'
   }`;
 
 function rpeFeedback(v: number): { title: string; tone: string } {
   if (v <= 3) return { title: '1–3: Sangat ringan', tone: 'border-sky-400/30 bg-sky-400/10 text-sky-300' };
-  if (v <= 6) return { title: '4–6: Sedang & nyaman', tone: 'border-volt/30 bg-volt/10 text-volt' };
+  if (v <= 6) return { title: '4–6: Sedang & nyaman', tone: 'border-[#BEF264]/30 bg-[#BEF264]/10 text-[#BEF264]' };
   if (v <= 8) return { title: '7–8: Berat', tone: 'border-amber-400/30 bg-amber-400/10 text-amber-300' };
-  return { title: '9–10: Maksimal', tone: 'border-coral/35 bg-coral/10 text-coral' };
+  return { title: '9–10: Maksimal', tone: 'border-rose-500/35 bg-rose-500/10 text-rose-400' };
 }
 
-/** Pilihan jenis sesi dengan sub-label ramah pemula (satu pilihan). */
 function TypePicker({ value, onChange }: { value: WorkoutType; onChange: (t: WorkoutType) => void }) {
   return (
     <div>
-      <div className="text-sm font-semibold text-slate-200">Jenis lari</div>
+      <div className="text-sm font-semibold text-zinc-200">Jenis lari</div>
       <div role="radiogroup" aria-label="Jenis lari" className="mt-1.5 grid grid-cols-2 gap-2">
         {TYPES.map((t, idx) => {
           const on = value === t.id;
@@ -54,8 +52,8 @@ function TypePicker({ value, onChange }: { value: WorkoutType; onChange: (t: Wor
               onClick={() => onChange(t.id)}
               className={`${chip(on)} ${idx === TYPES.length - 1 ? 'col-span-2' : ''}`}
             >
-              <span className={`font-display text-sm font-bold ${on ? 'text-volt' : 'text-white'}`}>{t.label}</span>
-              <span className={`text-[11px] leading-snug ${on ? 'text-slate-200' : 'text-slate-400'}`}>{t.desc}</span>
+              <span className={`font-display text-sm font-bold ${on ? 'text-[#BEF264]' : 'text-white'}`}>{t.label}</span>
+              <span className={`text-[11px] leading-snug ${on ? 'text-zinc-200' : 'text-zinc-400'}`}>{t.desc}</span>
             </button>
           );
         })}
@@ -64,7 +62,6 @@ function TypePicker({ value, onChange }: { value: WorkoutType; onChange: (t: Wor
   );
 }
 
-/** Topeng durasi gaya kalkulator: ketik angka saja, hasilnya HH:MM:SS (4500 → 00:45:00). */
 function maskDuration(raw: string): string {
   const d = raw.replace(/\D/g, '').replace(/^0+/, '').slice(-6);
   if (d === '') return '';
@@ -74,25 +71,30 @@ function maskDuration(raw: string): string {
 
 const CATAT_TABS = [
   { id: 'manual' as const, label: 'Catat manual' },
-  { id: 'impor' as const, label: 'Impor file (.FIT/.GPX)' },
+  { id: 'impor' as const, label: 'Impor .FIT / .GPX' },
 ];
 
-/** Skala 1–10 yang bisa diketuk. Ketuk angka terpilih sekali lagi untuk mengosongkan. */
 function RpeScale({ value, onChange, error, hint, warn }: { value: number | null; onChange: (v: number | null) => void; error?: string; hint?: string; warn?: string }) {
   const feedback = value != null ? rpeFeedback(value) : null;
   return (
     <div>
-      <div className="text-sm font-semibold text-slate-200">
-        Seberapa berat rasanya? <span className="font-normal text-slate-400">(RPE)</span>
+      <div className="text-sm font-semibold text-zinc-200">
+        Tingkat usaha <span className="font-normal text-zinc-400">(RPE)</span>
       </div>
       <div role="radiogroup" aria-label="Tingkat berat sesi, 1 sampai 10" className={`mt-1.5 grid grid-cols-5 gap-2 ${warn ? 'rounded-2xl p-1.5 ring-2 ring-amber-400/70' : ''}`}>
         {RPE_VALUES.map((n) => {
           const on = value === n;
           return (
-            <button key={n} type="button" role="radio" aria-checked={on} onClick={() => onChange(on ? null : n)}
-              className={`min-h-11 rounded-2xl border font-mono text-base font-bold tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt ${
-                on ? 'border-transparent bg-volt text-[#070709]' : 'border-white/10 bg-[#191B22] text-slate-300'
-              }`}>
+            <button
+              key={n}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => onChange(on ? null : n)}
+              className={`min-h-[44px] rounded-2xl border font-mono text-base font-bold tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                on ? 'border-transparent bg-[#BEF264] text-[#09090B]' : 'border-white/10 bg-[#18181D] text-zinc-300 hover:border-white/20'
+              }`}
+            >
               {n}
             </button>
           );
@@ -100,24 +102,34 @@ function RpeScale({ value, onChange, error, hint, warn }: { value: number | null
       </div>
       {feedback ? (
         <div className={`mt-2 rounded-2xl border px-3 py-2 text-xs font-semibold ${feedback.tone}`} aria-live="polite">
-          Tingkat kelelahan: {feedback.title}
+          {feedback.title}
         </div>
       ) : (
-        <div className="mt-1.5 flex justify-between text-xs text-slate-400">
-          <span>1–3: Sangat ringan</span>
+        <div className="mt-1.5 flex justify-between text-xs text-zinc-400">
+          <span>1–3: Ringan</span>
           <span>9–10: Maksimal</span>
         </div>
       )}
-      {error ? <p role="alert" className="mt-1 text-xs text-coral">{error}</p> : warn ? <p role="alert" className="mt-1 text-xs font-semibold text-amber-300">{warn}</p> : hint ? <p className="mt-1 text-xs text-slate-400">{hint}</p> : null}
+      {error ? (
+        <p role="alert" className="mt-1 text-xs text-rose-400">{error}</p>
+      ) : warn ? (
+        <p role="alert" className="mt-1 text-xs font-semibold text-amber-300">{warn}</p>
+      ) : hint ? (
+        <p className="mt-1 text-xs text-zinc-400">{hint}</p>
+      ) : null}
     </div>
   );
 }
 
 function Notice({ msg }: { msg: Msg }) {
   return msg.ok ? (
-    <p role="status" className="rounded-2xl border border-volt/25 bg-volt/10 px-3 py-2 text-sm font-semibold text-volt">✓ {msg.text}</p>
+    <p role="status" className="rounded-2xl border border-[#BEF264]/25 bg-[#BEF264]/10 px-3 py-2 text-sm font-semibold text-[#BEF264]">
+      ✓ {msg.text}
+    </p>
   ) : (
-    <p role="alert" className="rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">{msg.text}</p>
+    <p role="alert" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-400">
+      {msg.text}
+    </p>
   );
 }
 
@@ -130,11 +142,10 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
   const [activeShoes] = useState(() => loadShoes().filter((s) => !s.retired));
   const [shoeId, setShoeId] = useState(() => getDefaultShoeId(activeShoes) ?? '');
 
-  // Impor
   const [impType, setImpType] = useState<WorkoutType>('easy');
   const [impRpe, setImpRpe] = useState<number | null>(null);
   const [impWarn, setImpWarn] = useState(false);
-  // Manual
+
   const [date, setDate] = useState(todayStr());
   const [duration, setDuration] = useState('');
   const [distance, setDistance] = useState('');
@@ -144,7 +155,6 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
 
   const fail = (text: string) => setMsg({ text, ok: false });
 
-  // Setelah berhasil, tutup sheet sebentar kemudian agar pesan sempat terbaca.
   useEffect(() => {
     if (!msg?.ok) return;
     const id = setTimeout(() => doneRef.current?.(), CLOSE_DELAY_MS);
@@ -163,10 +173,10 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
         : parseGpx(await file.text(), profile.maxHr);
       if (parsed.avgHr == null && impRpe == null) {
         setImpWarn(true);
-        return fail('File ini tidak punya data detak jantung. Pilih tingkat kelelahan (RPE) di atas, lalu pilih berkas lagi agar Poin Usaha bisa dihitung.');
+        return fail('File tidak memiliki data HR. Pilih RPE di atas lalu pilih file lagi.');
       }
       if (isDuplicate(await db.workouts.toArray(), parsed)) {
-        return fail('Sesi ini sudah ada (waktu dan jarak sama). Impor dilewati.');
+        return fail('Sesi ini sudah tercatat.');
       }
       await db.workouts.add(finalizeWorkout({
         ...parsed,
@@ -175,12 +185,12 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
         ...(shoeId ? { shoeId } : {}),
       }, profile));
       setImpWarn(false);
-      setMsg({ text: `Sesi ${parsed.source.toUpperCase()} tersimpan: ${parsed.distanceKm.toFixed(2)} km.`, ok: true });
+      setMsg({ text: `Sesi ${parsed.source.toUpperCase()} tersimpan (${parsed.distanceKm.toFixed(2)} km).`, ok: true });
       onSaved();
     } catch (err) {
       fail(err instanceof Error ? err.message : 'Gagal membaca berkas.');
     } finally {
-      input.value = ''; // agar berkas yang sama bisa dipilih lagi
+      input.value = '';
     }
   };
 
@@ -190,10 +200,10 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
     const durationSec = parseDuration(duration);
     const distanceKm = Number(distance.replace(',', '.'));
     const next: Errs = {};
-    if (!date || date > today) next.date = 'Tanggal tidak boleh kosong atau di masa depan.';
-    if (durationSec == null) next.duration = 'Isi durasi dengan format jam:menit:detik, contoh 00:45:00.';
+    if (!date || date > today) next.date = 'Tanggal tidak valid.';
+    if (durationSec == null) next.duration = 'Gunakan format jam:menit:detik (mis. 00:45:00).';
     if (!(distanceKm > 0)) next.distance = 'Jarak harus lebih dari 0 km.';
-    if (rpe == null) next.rpe = 'Pilih seberapa berat sesi ini (1–10).';
+    if (rpe == null) next.rpe = 'Pilih skala RPE (1–10).';
     setErrs(next);
     setMsg(null);
     if (Object.keys(next).length > 0 || durationSec == null || rpe == null) return;
@@ -210,7 +220,7 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
       return fail(err instanceof Error ? err.message : 'Gagal menyimpan sesi.');
     }
     setDuration(''); setDistance(''); setRpe(null); setDate(todayStr());
-    setMsg({ text: 'Sesi tersimpan. Poin Usaha 7 hari diperbarui.', ok: true });
+    setMsg({ text: 'Sesi lari tersimpan.', ok: true });
     onSaved();
   };
 
@@ -232,10 +242,27 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
         <form id="catat-panel-manual" role="tabpanel" aria-labelledby="catat-tab-manual" onSubmit={onManual} noValidate className="space-y-4">
           <Field label="Tanggal" type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} error={errs.date} />
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Durasi" hint="Ketik angkanya saja: 4500 jadi 00:45:00" inputMode="numeric" value={duration} onChange={(e) => setDuration(maskDuration(e.target.value))}
-              placeholder="00:45:00" autoComplete="off" error={errs.duration} />
-            <Field label="Jarak" term="km" hint="Contoh 8,5" inputMode="decimal" value={distance} onChange={(e) => setDistance(e.target.value)}
-              placeholder="8,0" autoComplete="off" error={errs.distance} />
+            <Field
+              label="Durasi"
+              hint="Contoh 4500 → 00:45:00"
+              inputMode="numeric"
+              value={duration}
+              onChange={(e) => setDuration(maskDuration(e.target.value))}
+              placeholder="00:45:00"
+              autoComplete="off"
+              error={errs.duration}
+            />
+            <Field
+              label="Jarak"
+              term="km"
+              hint="Contoh 8,5"
+              inputMode="decimal"
+              value={distance}
+              onChange={(e) => setDistance(e.target.value)}
+              placeholder="8,0"
+              autoComplete="off"
+              error={errs.distance}
+            />
           </div>
           <TypePicker value={manType} onChange={setManType} />
           {shoePicker}
@@ -247,9 +274,13 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
         <div id="catat-panel-impor" role="tabpanel" aria-labelledby="catat-tab-impor" className="space-y-4">
           <TypePicker value={impType} onChange={setImpType} />
           {shoePicker}
-          <RpeScale value={impRpe} onChange={(v) => { setImpRpe(v); if (v != null) setImpWarn(false); }} hint="Wajib diisi bila file tidak punya data detak jantung."
-            warn={impWarn ? 'File ini tidak punya data detak jantung. Pilih RPE di sini, lalu pilih berkas lagi.' : undefined} />
-          <label className="flex min-h-[48px] w-full cursor-pointer items-center justify-center rounded-2xl bg-volt px-4 py-2 font-display text-sm font-extrabold text-[#070709] shadow-[0_0_20px_rgba(200,255,0,0.25)] focus-within:ring-2 focus-within:ring-volt focus-within:ring-offset-2 focus-within:ring-offset-[#070709]">
+          <RpeScale
+            value={impRpe}
+            onChange={(v) => { setImpRpe(v); if (v != null) setImpWarn(false); }}
+            hint="Wajib diisi bila file tidak memiliki data HR."
+            warn={impWarn ? 'Pilih RPE di atas lalu pilih file lagi.' : undefined}
+          />
+          <label className="flex min-h-[48px] w-full cursor-pointer items-center justify-center rounded-2xl bg-[#BEF264] px-4 py-2 font-display text-sm font-extrabold text-[#09090B] shadow-[0_0_20px_rgba(190,242,100,0.2)] transition hover:bg-[#d4fc82] focus-within:ring-2 focus-within:ring-[#BEF264] focus-within:ring-offset-2 focus-within:ring-offset-[#09090B]">
             Pilih berkas .FIT / .GPX
             <input type="file" accept=".fit,.gpx" onChange={onImport} className="sr-only" />
           </label>

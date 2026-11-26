@@ -468,3 +468,243 @@ test('AI schedule: applyScheduleState mengganti sesi pada tanggal yang dicakup d
   assert.ok(clampedAi);
   assert.equal(clampedAi.date, '2026-12-19', 'sesi non-race tidak boleh jatuh pada hari lomba');
 });
+
+test('Custom schedule: CRUD addCustomSession, updateCustomSession, deleteCustomSession, dan normalizeScheduleState', async () => {
+  const { addCustomSession, updateCustomSession, deleteCustomSession, setProgramTitle, formatDayMonthYear } = await import('./schedule.ts');
+  assert.equal(formatDayMonthYear('2026-11-26'), '26 Nov 2026');
+
+  let st = setProgramTitle(DEFAULT_SCHEDULE_STATE, '  Target Sub-25 5K  ');
+  assert.equal(st.programTitle, 'Target Sub-25 5K');
+
+  st = addCustomSession(st, {
+    date: '2026-11-18',
+    kind: 'recovery',
+    name: 'Easy Run Pagi',
+    distanceKm: 5.25,
+    durationMin: 34,
+    hr: [130, 145],
+    pace: [410, 385],
+    steps: ['Pemanasan 5 mnt', 'Lari santai 29 mnt'],
+    note: 'Fokus cadence',
+  });
+  assert.equal(st.customSessions?.length, 1);
+  const created = st.customSessions![0];
+  assert.equal(created.distanceKm, 5.3);
+  assert.deepEqual(created.hr, [130, 145]);
+  assert.deepEqual(created.pace, [385, 410]);
+  assert.equal(created.note, 'Fokus cadence');
+
+  const normalized = normalizeScheduleState(st);
+  assert.deepEqual(normalized, { ...st, days: [0, 2, 4, 6] });
+
+  st = updateCustomSession(st, created.id, {
+    name: 'Tempo Pagi',
+    kind: 'speed',
+    durationMin: 40,
+    hr: [160, 175],
+    pace: [260, 280],
+  });
+  assert.equal(st.customSessions![0].name, 'Tempo Pagi');
+  assert.equal(st.customSessions![0].kind, 'speed');
+  assert.equal(st.customSessions![0].zone, 'interval');
+  assert.equal(st.customSessions![0].durationMin, 40);
+  assert.deepEqual(st.customSessions![0].pace, [260, 280]);
+
+  st = deleteCustomSession(st, created.id);
+  assert.equal('customSessions' in st, false);
+});
+
+test('Custom schedule: applyPresetTemplate base5k, base10k, empty dan prioritas applyScheduleState', async () => {
+  const { applyPresetTemplate, addCustomSession } = await import('./schedule.ts');
+  const o = opts({ raceIso: '2026-12-20' });
+  const p = buildPlan(o);
+
+  const tpl5k = applyPresetTemplate(DEFAULT_SCHEDULE_STATE, 'base5k', {
+    todayIso: TODAY,
+    raceIso: o.raceIso,
+    maxHr: 185,
+    trainingDays: [2, 4, 6, 0],
+  });
+  assert.equal(tpl5k.programTitle, 'Dasar 5K');
+  assert.equal(tpl5k.customOnly, true);
+  assert.equal(tpl5k.customSessions?.length, 8);
+
+  const tpl10k = applyPresetTemplate(DEFAULT_SCHEDULE_STATE, 'base10k', {
+    todayIso: TODAY,
+    raceIso: o.raceIso,
+    maxHr: 185,
+    trainingDays: [2, 4, 6, 0],
+  });
+  assert.equal(tpl10k.programTitle, 'Dasar 10K');
+  assert.equal(tpl10k.customSessions?.some((s) => (s.distanceKm ?? 0) >= 10), true);
+
+  const emptySt = applyPresetTemplate(tpl5k, 'empty', { todayIso: TODAY, raceIso: o.raceIso });
+  assert.equal(emptySt.customOnly, true);
+  assert.equal(emptySt.customSessions, undefined);
+  const emptyApplied = applyScheduleState(p, emptySt, o.raceIso);
+  assert.deepEqual(
+    all(emptyApplied).map((s) => s.kind),
+    ['race'],
+    'customOnly kosong hanya mempertahankan sesi lomba',
+  );
+
+  const withCustomOverAi = addCustomSession(
+    {
+      ...DEFAULT_SCHEDULE_STATE,
+      aiSessions: [
+        {
+          id: 'ai-2026-11-17-0',
+          weekNo: 1,
+          phase: 'build',
+          kind: 'recovery',
+          name: 'AI Easy',
+          steps: [],
+          date: '2026-11-17',
+          baseDate: '2026-11-17',
+          distanceKm: 4,
+          durationMin: 25,
+          zone: 'easy',
+          hr: [130, 145],
+        },
+      ],
+    },
+    {
+      date: '2026-11-17',
+      kind: 'speed',
+      name: 'Kustom Prioritas',
+      durationMin: 35,
+    },
+  );
+  const merged = applyScheduleState(p, withCustomOverAi, o.raceIso);
+  const nov17 = all(merged).filter((s) => s.date === '2026-11-17');
+  assert.equal(nov17.length, 1);
+  assert.equal(nov17[0].name, 'Kustom Prioritas');
+});
+
+test('HR Zone presets, formatHrWithZone, dan speedHrSegments menghitung HRR & HRmaks dengan akurat', async () => {
+  const { calcHrZonePresetRange, formatHrWithZone, speedHrSegments } = await import('./hrZones.ts');
+
+  const z2Hrr = calcHrZonePresetRange(2, 182, 55);
+  assert.ok(z2Hrr);
+  assert.equal(z2Hrr.method, 'hrr');
+  assert.equal(z2Hrr.min, 131);
+  assert.equal(z2Hrr.max, 144);
+
+  const z4MaxOnly = calcHrZonePresetRange(4, 200, 0);
+  assert.ok(z4MaxOnly);
+  assert.equal(z4MaxOnly.method, 'max');
+  assert.equal(z4MaxOnly.min, 160);
+  assert.equal(z4MaxOnly.max, 180);
+
+  assert.equal(calcHrZonePresetRange(1, 0, 50), null);
+
+  assert.equal(formatHrWithZone([130, 150], 'easy', 182, 55), 'Zona 2 · 130–150 bpm');
+  assert.equal(formatHrWithZone([164, 175], 'interval', 182, 55), 'Zona 4 · 164–175 bpm');
+  assert.equal(formatHrWithZone([169, 182], undefined, 182, 55), 'Zona 5 · 169–182 bpm');
+
+  const segments = speedHrSegments({ sessionHr: [164, 175], maxHr: 182, restingHr: 55 });
+  assert.equal(segments.length, 4);
+  assert.deepEqual(
+    segments.map((x) => [x.label, x.zoneCode, x.bpmText]),
+    [
+      ['Pemanasan', 'Z1–Z2', '< 144 bpm'],
+      ['Interval Kerja', 'Z4–Z5', '164–175 bpm'],
+      ['Istirahat', 'Z1–Z2', '< 138 bpm'],
+      ['Pendinginan', 'Z1', '< 131 bpm'],
+    ],
+  );
+});
+
+test('WorkoutStepBuilder: Norwegian 4x4 menghitung total durasi, jarak, HR utama, string steps, & profile bars', async () => {
+  const {
+    WORKOUT_PRESETS,
+    summarizeStructuredWorkout,
+    buildWorkoutProfileBars,
+    formatStepDuration,
+    formatStepTarget,
+  } = await import('./workoutBuilder.ts');
+  const { addCustomSession } = await import('./schedule.ts');
+
+  const norwegian = WORKOUT_PRESETS.find((p) => p.id === 'norwegian4x4')!;
+  const blocks = norwegian.build();
+
+  // maxHr 185, restingHr 55 => HRR = 130
+  // Z2: 60-70% => 55 + 78..91 = 133..146 bpm
+  // Z4: 80-90% => 55 + 104..117 = 159..172 bpm
+  // Z1: 50-60% => 55 + 65..78 = 120..133 bpm
+  const summary = summarizeStructuredWorkout(blocks, {
+    maxHr: 185,
+    restingHr: 55,
+    referencePaceSecPerKm: 360,
+  });
+
+  // 10 + 4*(4+3) + 5 = 43 menit
+  assert.equal(summary.durationMin, 43);
+  assert.ok(summary.distanceKm != null && summary.distanceKm > 5);
+  assert.deepEqual(summary.hr, [159, 172]);
+  assert.deepEqual(summary.steps, [
+    'Warm Up: 10:00 · Z2 (133–146 bpm)',
+    '4x [Run 4:00 · Z4 (159–172 bpm) + Recover 3:00 · Z2 (133–146 bpm)]',
+    'Cool Down: 5:00 · Z1 (120–133 bpm)',
+  ]);
+
+  const bars = buildWorkoutProfileBars(blocks, 360);
+  // 1 warmup + (4 * 2 repeat steps) + 1 cooldown = 10 bar
+  assert.equal(bars.length, 10);
+  assert.equal(bars[0].kind, 'warmup');
+  assert.equal(bars[1].kind, 'run');
+  assert.equal(bars[2].kind, 'recover');
+  assert.equal(bars[9].kind, 'cooldown');
+
+  assert.equal(
+    formatStepDuration({ durationType: 'distance', durationValue: 400 }),
+    '400 m',
+  );
+  assert.equal(
+    formatStepDuration({ durationType: 'distance', durationValue: 1600 }),
+    '1.6 km',
+  );
+  assert.equal(
+    formatStepDuration({ durationType: 'open' }),
+    'Lap Button',
+  );
+  assert.equal(
+    formatStepTarget(
+      {
+        id: 'x',
+        kind: 'run',
+        durationType: 'time',
+        durationValue: 240,
+        targetType: 'hr_zone',
+        hrZone: 4,
+      },
+      185,
+      55,
+    ),
+    'Zona 4 · 159–172 bpm',
+  );
+
+  const saved = addCustomSession(DEFAULT_SCHEDULE_STATE, {
+    date: '2026-11-26',
+    kind: 'speed',
+    name: 'Norwegian 4×4',
+    distanceKm: summary.distanceKm,
+    durationMin: summary.durationMin,
+    hr: summary.hr,
+    steps: summary.steps,
+    structuredSteps: summary.structuredSteps,
+  });
+
+  const normalized = normalizeScheduleState(saved);
+  assert.ok(normalized?.customSessions?.[0].structuredSteps);
+  assert.equal(normalized!.customSessions![0].structuredSteps!.length, 3);
+
+  const backup = parseBackup({ app: 'pacelab', workouts: [], schedule: normalized });
+  assert.deepEqual(
+    backup.schedule?.customSessions?.[0].structuredSteps,
+    normalized!.customSessions![0].structuredSteps,
+  );
+});
+
+
+

@@ -29,7 +29,7 @@ export default function AiLoader() {
           {BAR_DELAYS.map((delay, idx) => (
             <span
               key={idx}
-              className="h-5 w-1 origin-bottom rounded-full bg-volt"
+              className="h-5 w-1 origin-bottom rounded-full bg-[#BEF264]"
               style={{
                 animation: 'pacelab-wave 1s ease-in-out infinite',
                 animationDelay: delay,
@@ -37,7 +37,7 @@ export default function AiLoader() {
             />
           ))}
         </div>
-        <span className="text-xs font-semibold text-slate-200">
+        <span className="text-xs font-semibold text-zinc-200">
           {STATUS_MESSAGES[msgIdx]}
         </span>
       </div>
@@ -46,7 +46,7 @@ export default function AiLoader() {
         <div
           className="h-2.5 w-full rounded-full"
           style={{
-            background: 'linear-gradient(90deg, #191B22 25%, rgba(200, 255, 0, 0.16) 50%, #191B22 75%)',
+            background: 'linear-gradient(90deg, #18181D 25%, rgba(190, 242, 100, 0.16) 50%, #18181D 75%)',
             backgroundSize: '200% 100%',
             animation: 'pacelab-shimmer 1.6s linear infinite',
           }}
@@ -54,7 +54,7 @@ export default function AiLoader() {
         <div
           className="h-2.5 w-3/4 rounded-full"
           style={{
-            background: 'linear-gradient(90deg, #191B22 25%, rgba(56, 189, 248, 0.16) 50%, #191B22 75%)',
+            background: 'linear-gradient(90deg, #18181D 25%, rgba(56, 189, 248, 0.16) 50%, #18181D 75%)',
             backgroundSize: '200% 100%',
             animation: 'pacelab-shimmer 1.6s linear infinite',
           }}

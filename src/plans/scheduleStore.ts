@@ -1,5 +1,20 @@
-import { clearAiSchedule, DEFAULT_SCHEDULE_STATE, normalizeScheduleState } from './schedule.ts';
-import type { PlanSession, ScheduleState } from './schedule.ts';
+import {
+  addCustomSession,
+  applyPresetTemplate,
+  clearAiSchedule,
+  DEFAULT_SCHEDULE_STATE,
+  deleteCustomSession,
+  normalizeScheduleState,
+  setProgramTitle,
+  updateCustomSession,
+} from './schedule.ts';
+import type {
+  CustomSessionInput,
+  PlanSession,
+  PresetTemplateId,
+  PresetTemplateOptions,
+  ScheduleState,
+} from './schedule.ts';
 import { normalizePlanMode } from './planSelector.ts';
 import type { PlanMode } from './planSelector.ts';
 import { normalizeMafAdj } from './maf.ts';
@@ -35,6 +50,44 @@ export function saveAiScheduleState(current: ScheduleState, aiSessions: PlanSess
 
 export function clearAiScheduleState(current: ScheduleState): ScheduleState {
   const next = clearAiSchedule(current);
+  saveScheduleState(next);
+  return next;
+}
+
+export function addCustomSessionState(current: ScheduleState, input: CustomSessionInput): ScheduleState {
+  const next = addCustomSession(current, input);
+  saveScheduleState(next);
+  return next;
+}
+
+export function updateCustomSessionState(
+  current: ScheduleState,
+  id: string,
+  patch: Partial<CustomSessionInput>,
+): ScheduleState {
+  const next = updateCustomSession(current, id, patch);
+  saveScheduleState(next);
+  return next;
+}
+
+export function deleteCustomSessionState(current: ScheduleState, id: string): ScheduleState {
+  const next = deleteCustomSession(current, id);
+  saveScheduleState(next);
+  return next;
+}
+
+export function applyPresetTemplateState(
+  current: ScheduleState,
+  templateId: PresetTemplateId,
+  opts: PresetTemplateOptions,
+): ScheduleState {
+  const next = applyPresetTemplate(current, templateId, opts);
+  saveScheduleState(next);
+  return next;
+}
+
+export function setProgramTitleState(current: ScheduleState, title: string): ScheduleState {
+  const next = setProgramTitle(current, title);
   saveScheduleState(next);
   return next;
 }

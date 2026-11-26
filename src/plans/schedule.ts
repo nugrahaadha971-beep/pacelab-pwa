@@ -6,8 +6,13 @@ import type { TestKind } from './progressive5k.ts';
 import { MAF_5K, MAF_RACE_STEPS } from './maf.ts';
 import { hrRange } from './hrZones.ts';
 import type { Zone } from './hrZones.ts';
+import { normalizeStructuredSteps } from './workoutBuilder.ts';
+import type { RepeatBlock, SingleStep, WorkoutBlock } from './workoutBuilder.ts';
 
-export type CurriculumId = 'nike5k' | 'progressive5k' | 'maf';
+export type { RepeatBlock, SingleStep, WorkoutBlock };
+export type { WorkoutDurationType, WorkoutStepKind, WorkoutTargetType } from './workoutBuilder.ts';
+
+export type CurriculumId = 'nike5k' | 'progressive5k' | 'maf' | 'custom';
 
 export type IsoDate = string; // YYYY-MM-DD (kalender, tanpa zona waktu)
 export type Phase = 'base' | 'build' | 'taper' | 'race';
@@ -76,6 +81,12 @@ export function formatDayMonth(iso: IsoDate): string {
   const [, m, d] = iso.split('-').map(Number);
   return `${d} ${MONTH_SHORT[m - 1]}`;
 }
+/** Contoh: "26 Nov 2026". */
+export function formatDayMonthYear(iso: IsoDate): string {
+  if (!isValidIso(iso)) return iso;
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} ${MONTH_SHORT[m - 1]} ${y}`;
+}
 
 export interface Remaining { daysRemaining: number; weeksRemaining: number }
 /** daysRemaining = ceil((target − hari ini) / 86400000); dihitung pada tanggal kalender sehingga selalu bilangan bulat. */
@@ -95,6 +106,12 @@ export interface ScheduleState {
   overrides: Record<string, IsoDate>;
   /** Centang manual "Selesai". */
   done: Record<string, true>;
+  /** Sesi latihan kustom milik pengguna. */
+  customSessions?: PlanSession[];
+  /** Nama program latihan aktif milik pengguna. */
+  programTitle?: string;
+  /** Jika true, kalender hanya menampilkan sesi kustom/AI (+ hari lomba) tanpa sesi kurikulum bawaan. */
+  customOnly?: boolean;
   /** Sesi latihan terstruktur hasil penyusunan Gemini AI. */
   aiSessions?: PlanSession[];
   /** Ringkasan analisis program hasil Gemini AI. */
@@ -105,22 +122,28 @@ export const DEFAULT_SCHEDULE_STATE: ScheduleState = { days: [2, 4, 6, 0], shift
 export const SHIFT_LIMIT = 60;
 
 const AI_KINDS: readonly SessionKind[] = ['recovery', 'long', 'speed'];
+const CUSTOM_KINDS: readonly SessionKind[] = ['recovery', 'long', 'speed', 'race'];
 const VALID_PHASES: readonly Phase[] = ['base', 'build', 'taper', 'race'];
 const VALID_ZONES: readonly Zone[] = ['easy', 'interval', 'race', 'test', 'maf'];
 
-function normalizeAiSession(raw: unknown): PlanSession | null {
+function normalizeStoredSession(raw: unknown, allowRace: boolean): PlanSession | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
   const id = typeof r.id === 'string' ? r.id.trim() : '';
   const name = typeof r.name === 'string' ? r.name.trim() : '';
   if (!id || !name) return null;
-  if (typeof r.kind !== 'string' || !AI_KINDS.includes(r.kind as SessionKind)) return null;
+  const allowedKinds = allowRace ? CUSTOM_KINDS : AI_KINDS;
+  if (typeof r.kind !== 'string' || !allowedKinds.includes(r.kind as SessionKind)) return null;
   const kind = r.kind as SessionKind;
   if (!isValidIso(r.date)) return null;
   const date = r.date;
   const baseDate = isValidIso(r.baseDate) ? r.baseDate : date;
   const weekNo = typeof r.weekNo === 'number' && Number.isInteger(r.weekNo) && r.weekNo >= 1 ? r.weekNo : 1;
-  const phase: Phase = typeof r.phase === 'string' && VALID_PHASES.includes(r.phase as Phase) ? (r.phase as Phase) : 'build';
+  const phase: Phase = typeof r.phase === 'string' && VALID_PHASES.includes(r.phase as Phase)
+    ? (r.phase as Phase)
+    : kind === 'race'
+      ? 'race'
+      : 'build';
   const steps = Array.isArray(r.steps)
     ? r.steps.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim())
     : [];
@@ -143,12 +166,30 @@ function normalizeAiSession(raw: unknown): PlanSession | null {
   ) {
     hr = [Math.round(r.hr[0]), Math.round(r.hr[1])];
   }
+  let pace: [number, number] | null = null;
+  if (
+    Array.isArray(r.pace) &&
+    r.pace.length === 2 &&
+    typeof r.pace[0] === 'number' &&
+    typeof r.pace[1] === 'number' &&
+    Number.isFinite(r.pace[0]) &&
+    Number.isFinite(r.pace[1]) &&
+    r.pace[0] > 0 &&
+    r.pace[1] > 0
+  ) {
+    const a = Math.round(r.pace[0]);
+    const b = Math.round(r.pace[1]);
+    pace = [Math.min(a, b), Math.max(a, b)];
+  }
   const zone: Zone = typeof r.zone === 'string' && VALID_ZONES.includes(r.zone as Zone)
     ? (r.zone as Zone)
     : kind === 'speed'
       ? 'interval'
-      : 'easy';
+      : kind === 'race'
+        ? 'race'
+        : 'easy';
   const note = typeof r.note === 'string' && r.note.trim() ? r.note.trim() : undefined;
+  const structuredSteps = normalizeStructuredSteps(r.structuredSteps);
 
   return {
     id,
@@ -157,12 +198,14 @@ function normalizeAiSession(raw: unknown): PlanSession | null {
     kind,
     name,
     steps,
+    ...(structuredSteps ? { structuredSteps } : {}),
     date,
     baseDate,
     distanceKm,
     durationMin,
     zone,
     hr,
+    ...(pace ? { pace } : {}),
     ...(note ? { note } : {}),
   };
 }
@@ -182,12 +225,19 @@ export function normalizeScheduleState(raw: unknown): ScheduleState | null {
   if (typeof r.done === 'object' && r.done !== null) {
     for (const [k, v] of Object.entries(r.done)) if (v === true) done[k] = true;
   }
+  const customSessions = Array.isArray(r.customSessions)
+    ? r.customSessions.map((s) => normalizeStoredSession(s, true)).filter((s): s is PlanSession => s !== null)
+    : [];
+  const programTitle = typeof r.programTitle === 'string' && r.programTitle.trim() ? r.programTitle.trim() : '';
   const aiSessions = Array.isArray(r.aiSessions)
-    ? r.aiSessions.map(normalizeAiSession).filter((s): s is PlanSession => s !== null)
+    ? r.aiSessions.map((s) => normalizeStoredSession(s, false)).filter((s): s is PlanSession => s !== null)
     : [];
   const aiSummary = typeof r.aiSummary === 'string' && r.aiSummary.trim() ? r.aiSummary.trim() : '';
 
   const out: ScheduleState = { days: days.length ? days : [...DEFAULT_SCHEDULE_STATE.days], shift, overrides, done };
+  if (customSessions.length > 0) out.customSessions = customSessions;
+  if (programTitle) out.programTitle = programTitle;
+  if (r.customOnly === true) out.customOnly = true;
   if (aiSessions.length > 0) out.aiSessions = aiSessions;
   if (aiSummary) out.aiSummary = aiSummary;
   return out;
@@ -226,6 +276,247 @@ export function swapSessions(state: ScheduleState, a: PlanSession, b: PlanSessio
   return { ...state, overrides: { ...state.overrides, [a.id]: b.date, [b.id]: a.date } };
 }
 
+export interface CustomSessionInput {
+  id?: string;
+  date: IsoDate;
+  kind: SessionKind;
+  name: string;
+  distanceKm?: number | null;
+  durationMin?: number | null;
+  hr?: [number, number] | null;
+  pace?: [number, number] | null;
+  steps?: string[];
+  structuredSteps?: WorkoutBlock[];
+  note?: string;
+}
+
+export type PresetTemplateId = 'base5k' | 'base10k' | 'empty';
+
+export interface PresetTemplateOptions {
+  todayIso: IsoDate;
+  raceIso?: IsoDate | null;
+  maxHr?: number | null;
+  trainingDays?: number[];
+}
+
+function zoneForKind(kind: SessionKind): Zone {
+  if (kind === 'speed') return 'interval';
+  if (kind === 'race') return 'race';
+  return 'easy';
+}
+
+function buildCustomSessionRecord(input: CustomSessionInput, fallbackId: string): PlanSession {
+  const name = input.name.trim() || 'Sesi Latihan';
+  const distanceKm =
+    typeof input.distanceKm === 'number' && Number.isFinite(input.distanceKm) && input.distanceKm > 0
+      ? Math.round(input.distanceKm * 10) / 10
+      : null;
+  const durationMin =
+    typeof input.durationMin === 'number' && Number.isFinite(input.durationMin) && input.durationMin > 0
+      ? Math.round(input.durationMin)
+      : null;
+  const hr: [number, number] | null =
+    input.hr &&
+    Number.isFinite(input.hr[0]) &&
+    Number.isFinite(input.hr[1]) &&
+    input.hr[0] > 0 &&
+    input.hr[1] >= input.hr[0]
+      ? [Math.round(input.hr[0]), Math.round(input.hr[1])]
+      : null;
+  const pace: [number, number] | null =
+    input.pace &&
+    Number.isFinite(input.pace[0]) &&
+    Number.isFinite(input.pace[1]) &&
+    input.pace[0] > 0 &&
+    input.pace[1] > 0
+      ? [Math.min(Math.round(input.pace[0]), Math.round(input.pace[1])), Math.max(Math.round(input.pace[0]), Math.round(input.pace[1]))]
+      : null;
+  const steps = (input.steps ?? []).map((s) => s.trim()).filter(Boolean);
+  const structuredSteps = normalizeStructuredSteps(input.structuredSteps);
+  const note = input.note?.trim() ? input.note.trim() : undefined;
+
+  return {
+    id: input.id?.trim() || fallbackId,
+    weekNo: 1,
+    phase: input.kind === 'race' ? 'race' : 'build',
+    kind: input.kind,
+    name,
+    steps,
+    ...(structuredSteps ? { structuredSteps } : {}),
+    date: input.date,
+    baseDate: input.date,
+    distanceKm,
+    durationMin,
+    zone: zoneForKind(input.kind),
+    hr,
+    ...(pace ? { pace } : {}),
+    ...(note ? { note } : {}),
+  };
+}
+
+export function addCustomSession(state: ScheduleState, input: CustomSessionInput): ScheduleState {
+  if (!isValidIso(input.date)) return state;
+  const existing = state.customSessions ?? [];
+  const uid = `custom-${input.date}-${Date.now().toString(36)}-${existing.length}`;
+  const session = buildCustomSessionRecord(input, uid);
+  const customSessions = [...existing, session].sort((a, b) => dayNum(a.date) - dayNum(b.date));
+  return {
+    ...state,
+    customSessions,
+    ...(state.programTitle ? {} : { programTitle: 'Program Latihan Saya' }),
+  };
+}
+
+export function updateCustomSession(
+  state: ScheduleState,
+  id: string,
+  patch: Partial<CustomSessionInput>,
+): ScheduleState {
+  const existing = state.customSessions ?? [];
+  const target = existing.find((s) => s.id === id);
+  if (!target) return state;
+
+  const nextDate = patch.date && isValidIso(patch.date) ? patch.date : target.date;
+  const updated = buildCustomSessionRecord(
+    {
+      id: target.id,
+      date: nextDate,
+      kind: patch.kind ?? target.kind,
+      name: patch.name !== undefined ? patch.name : target.name,
+      distanceKm: patch.distanceKm !== undefined ? patch.distanceKm : target.distanceKm,
+      durationMin: patch.durationMin !== undefined ? patch.durationMin : target.durationMin,
+      hr: patch.hr !== undefined ? patch.hr : target.hr,
+      pace: patch.pace !== undefined ? patch.pace : target.pace,
+      steps: patch.steps !== undefined ? patch.steps : target.steps,
+      structuredSteps:
+        patch.structuredSteps !== undefined ? patch.structuredSteps : target.structuredSteps,
+      note: patch.note !== undefined ? patch.note : target.note,
+    },
+    target.id,
+  );
+
+  const overrides = { ...state.overrides };
+  if (patch.date && isValidIso(patch.date)) delete overrides[id];
+
+  const customSessions = existing
+    .map((s) => (s.id === id ? updated : s))
+    .sort((a, b) => dayNum(a.date) - dayNum(b.date));
+
+  return { ...state, overrides, customSessions };
+}
+
+export function deleteCustomSession(state: ScheduleState, id: string): ScheduleState {
+  const existing = state.customSessions ?? [];
+  const nextList = existing.filter((s) => s.id !== id);
+  const overrides = { ...state.overrides };
+  delete overrides[id];
+  const done = { ...state.done };
+  delete done[id];
+
+  const { customSessions: _old, ...rest } = state;
+  return {
+    ...rest,
+    overrides,
+    done,
+    ...(nextList.length > 0 ? { customSessions: nextList } : {}),
+  };
+}
+
+export function setProgramTitle(state: ScheduleState, title: string): ScheduleState {
+  const trimmed = title.trim();
+  if (!trimmed) {
+    const { programTitle: _old, ...rest } = state;
+    return rest;
+  }
+  return { ...state, programTitle: trimmed };
+}
+
+export function applyPresetTemplate(
+  state: ScheduleState,
+  templateId: PresetTemplateId,
+  opts: PresetTemplateOptions,
+): ScheduleState {
+  const { customSessions: _cs, aiSessions: _ai, aiSummary: _as, ...rest } = state;
+  const overrides: Record<string, IsoDate> = {};
+  for (const [k, v] of Object.entries(rest.overrides)) {
+    if (!k.startsWith('custom-') && !k.startsWith('tpl-') && !k.startsWith('ai-')) overrides[k] = v;
+  }
+
+  if (templateId === 'empty') {
+    return {
+      ...rest,
+      overrides,
+      programTitle: 'Program Kustom',
+      customOnly: true,
+    };
+  }
+
+  const days = (opts.trainingDays && opts.trainingDays.length > 0 ? opts.trainingDays : state.days).slice().sort((a, b) => a - b);
+  const raceLimit = opts.raceIso && isValidIso(opts.raceIso) ? dayNum(opts.raceIso) : null;
+  const startDay = dayNum(opts.todayIso);
+
+  const slots: IsoDate[] = [];
+  for (let offset = 0; offset < 14 && slots.length < 8; offset++) {
+    const d = startDay + offset;
+    if (raceLimit != null && d >= raceLimit) break;
+    const iso = fromDayNum(d);
+    if (days.includes(weekdayOf(iso))) slots.push(iso);
+  }
+  if (slots.length === 0 && (raceLimit == null || startDay < raceLimit)) {
+    slots.push(opts.todayIso);
+  }
+
+  const easyHr = hrRange('easy', opts.maxHr);
+  const speedHr = hrRange('interval', opts.maxHr);
+  const is10k = templateId === 'base10k';
+  const blueprint: Array<{ kind: SessionKind; name: string; distanceKm: number | null; durationMin: number; steps: string[] }> = is10k
+    ? [
+        { kind: 'recovery', name: 'Easy Run Aerobik', distanceKm: 5, durationMin: 35, steps: ['Lari santai di zona HR mudah', 'Fokus ritme napas rileks'] },
+        { kind: 'speed', name: 'Tempo Terkontrol', distanceKm: 6, durationMin: 38, steps: ['10 menit pemanasan', '18 menit tempo stabil', '10 menit pendinginan'] },
+        { kind: 'recovery', name: 'Easy Run Pemulihan', distanceKm: 5, durationMin: 32, steps: ['Lari santai menjaga konsistensi'] },
+        { kind: 'long', name: 'Long Run Dasar', distanceKm: 10, durationMin: 68, steps: ['Jaga detak jantung stabil di zona aerobik'] },
+        { kind: 'recovery', name: 'Easy Run + Strides', distanceKm: 5.5, durationMin: 35, steps: ['30 menit easy run', '4 × 20 dtk strides rileks'] },
+        { kind: 'speed', name: 'Interval 5×600m', distanceKm: 6.5, durationMin: 40, steps: ['10 menit pemanasan', '5 × 600m cepat, jeda 2 menit jalan', '10 menit pendinginan'] },
+        { kind: 'recovery', name: 'Easy Run Ringan', distanceKm: 4.5, durationMin: 30, steps: ['Lari ringan menjaga kesegaran kaki'] },
+        { kind: 'long', name: 'Long Run Progresif', distanceKm: 12, durationMin: 80, steps: ['Mulai santai, pertahankan ritme stabil hingga selesai'] },
+      ]
+    : [
+        { kind: 'recovery', name: 'Easy Run Aerobik', distanceKm: 3.5, durationMin: 25, steps: ['Lari santai di zona HR mudah'] },
+        { kind: 'speed', name: 'Fartlek Ringan', distanceKm: 4, durationMin: 28, steps: ['10 menit pemanasan', '5 × (1 mnt cepat / 2 mnt santai)', '5 menit pendinginan'] },
+        { kind: 'recovery', name: 'Easy Run Pemulihan', distanceKm: 3, durationMin: 22, steps: ['Jaga napas santai, bisa berbicara lancar'] },
+        { kind: 'long', name: 'Long Run Dasar', distanceKm: 6, durationMin: 42, steps: ['Lari terjauh minggu ini dengan ritme nyaman'] },
+        { kind: 'recovery', name: 'Easy Run + Strides', distanceKm: 4, durationMin: 28, steps: ['22 menit easy run', '4 × 20 dtk strides rileks'] },
+        { kind: 'speed', name: 'Interval 4×400m', distanceKm: 4.5, durationMin: 32, steps: ['10 menit pemanasan', '4 × 400m ritme cepat, jeda 90 dtk jalan', '8 menit pendinginan'] },
+        { kind: 'recovery', name: 'Easy Run Ringan', distanceKm: 3, durationMin: 22, steps: ['Pemulihan aktif sebelum long run'] },
+        { kind: 'long', name: 'Long Run Akhir Pekan', distanceKm: 7.5, durationMin: 52, steps: ['Pertahankan detak jantung stabil hingga akhir'] },
+      ];
+
+  const customSessions: PlanSession[] = slots.map((date, idx) => {
+    const item = blueprint[idx % blueprint.length];
+    return buildCustomSessionRecord(
+      {
+        id: `tpl-${templateId}-${idx}-${date}`,
+        date,
+        kind: item.kind,
+        name: item.name,
+        distanceKm: item.distanceKm,
+        durationMin: item.durationMin,
+        hr: item.kind === 'speed' ? speedHr : easyHr,
+        steps: item.steps,
+      },
+      `tpl-${templateId}-${idx}`,
+    );
+  });
+
+  return {
+    ...rest,
+    overrides,
+    programTitle: is10k ? 'Dasar 10K' : 'Dasar 5K',
+    customOnly: true,
+    customSessions,
+  };
+}
+
 // ───────────────────────── Model rencana ─────────────────────────
 
 export interface Adjustment { code: 'high_load' | 'ef_up' | 'drift' | 'add_volume'; badge: string; reason: string }
@@ -237,6 +528,7 @@ export interface PlanSession {
   kind: SessionKind;
   name: string;
   steps: string[];
+  structuredSteps?: WorkoutBlock[];
   date: IsoDate; // tanggal efektif (setelah geser/ubah manual)
   baseDate: IsoDate; // tanggal hasil penjadwalan otomatis
   distanceKm: number | null;
@@ -245,6 +537,7 @@ export interface PlanSession {
   demoted?: boolean; // speed → easy karena tidak ada hari yang tidak bersebelahan dengan Long Run
   zone?: Zone; // zona HR: easy (Easy/Long), interval, race, test
   hr?: [number, number] | null; // target bpm dari HR maks
+  pace?: [number, number] | null; // target pace [minSec, maxSec] per km (opsional)
   test?: TestKind;
   repKm?: number; // jarak ulangan interval (km)
   // Diisi oleh adaptiveEngine
@@ -491,10 +784,11 @@ export function buildPlan(o: PlanOptions): Plan {
   const { daysRemaining, weeksRemaining } = remaining(o.raceIso, o.todayIso);
   if (daysRemaining < 0) return { weeks: [], daysRemaining, weeksRemaining: 0, baseWeeks: 0, totalWeeks: 0 };
 
-  const tpl = template(o.curriculum ?? 'nike5k', o.easyPaceSecPerKm);
-  const tplWeeks = tpl.weeks.length;
+  const isCustomNeutral = o.curriculum === 'custom';
+  const tpl = isCustomNeutral ? null : template(o.curriculum ?? 'nike5k', o.easyPaceSecPerKm);
+  const tplWeeks = tpl ? tpl.weeks.length : 0;
   const total = Math.max(1, weeksRemaining);
-  const peakCount = Math.min(tplWeeks, total);
+  const peakCount = isCustomNeutral ? 0 : Math.min(tplWeeks, total);
   const baseCount = total - peakCount;
   const volumes = baseVolumes(baseCount, Math.max(o.startWeeklyKm, MIN_BASE_WEEKLY_KM), o.maxWeeklyKm);
   const raceDay = o.raceIso;
@@ -509,7 +803,7 @@ export function buildPlan(o: PlanOptions): Plan {
     const isLast = i === total - 1;
     const isBase = i < baseCount;
     const tIdx = tplWeeks - peakCount + (i - baseCount);
-    const tw = isBase ? null : tpl.weeks[tIdx];
+    const tw = isBase || !tpl ? null : tpl.weeks[tIdx];
 
     let slots: IsoDate[] = [];
     for (let d = Math.max(dayNum(start), dayNum(o.todayIso)); d <= dayNum(end); d++) {
@@ -517,7 +811,7 @@ export function buildPlan(o: PlanOptions): Plan {
       if (o.days.includes(weekdayOf(iso)) && !(isLast && iso === raceDay)) slots.push(iso);
     }
     // Minggu lomba (templat tanpa shake-out): sisakan hari sebelum lomba untuk istirahat bila masih ada ≥ 2 slot lain.
-    if (isLast && !tpl.keepPreRaceDay && slots.length > 2 && slots[slots.length - 1] === addDays(raceDay, -1)) slots = slots.slice(0, -1);
+    if (isLast && (!tpl || !tpl.keepPreRaceDay) && slots.length > 2 && slots[slots.length - 1] === addDays(raceDay, -1)) slots = slots.slice(0, -1);
 
     let drafts: Draft[];
     let plannedKm: number | null = null;
@@ -535,20 +829,20 @@ export function buildPlan(o: PlanOptions): Plan {
       plannedKm = round1(easyKm * (n - 1) + longKm);
     } else {
       drafts = (tw as NonNullable<typeof tw>).sessions.map((x) => ({
-        id: `${tpl.idPrefix}${tIdx}-${x.key}`, kind: x.kind, name: x.name, steps: x.steps, zone: x.zone,
+        id: `${tpl!.idPrefix}${tIdx}-${x.key}`, kind: x.kind, name: x.name, steps: x.steps, zone: x.zone,
         distanceKm: x.distanceKm, durationMin: x.durationMin, test: x.test, repKm: x.repKm, fixedWeekday: x.fixedWeekday,
       }));
     }
 
     const picked = pickSessions(drafts, slots.length).map((k) => drafts[k]);
-    const keep = enforceLongMargin(picked, o.easyPaceSecPerKm, tpl.capRecovery && !isBase, !!tw?.deload);
+    const keep = enforceLongMargin(picked, o.easyPaceSecPerKm, Boolean(tpl?.capRecovery && !isBase), !!tw?.deload);
     const placed = assignWeek(keep, slots, ctx);
-    const phase: Phase = isBase ? 'base' : isLast ? 'taper' : 'build';
+    const phase: Phase = isCustomNeutral ? (isLast ? 'taper' : 'build') : isBase ? 'base' : isLast ? 'taper' : 'build';
 
     const sessions: PlanSession[] = placed.map(({ draft, date }) => {
       let { durationMin, distanceKm, name } = draft;
       let note: string | undefined;
-      if (phase === 'taper' && tpl.taperCut) {
+      if (phase === 'taper' && tpl?.taperCut) {
         const f = 1 - TAPER_CUT;
         if (durationMin != null) durationMin = Math.round(durationMin * f);
         if (distanceKm != null) distanceKm = round1(distanceKm * f);
@@ -564,7 +858,7 @@ export function buildPlan(o: PlanOptions): Plan {
 
     if (isLast) {
       sessions.push({
-        id: 'race', weekNo: i + 1, phase: 'race', kind: 'race', name: o.raceName, steps: tpl.raceSteps,
+        id: 'race', weekNo: i + 1, phase: 'race', kind: 'race', name: o.raceName, steps: tpl?.raceSteps ?? [],
         date: raceDay, baseDate: raceDay, distanceKm: null, durationMin: null, zone: 'race', hr: withHr('race'),
       });
     }
@@ -577,18 +871,51 @@ export function buildPlan(o: PlanOptions): Plan {
   return { weeks, daysRemaining, weeksRemaining, baseWeeks: baseCount, totalWeeks: total };
 }
 
-/** Terapkan geser global, tanggal manual, serta sesi AI bila aktif. Hari lomba tetap; sesi lain tidak boleh jatuh pada/setelah hari lomba. */
+/** Terapkan geser global, tanggal manual, serta prioritaskan sesi kustom dan sesi AI di atas jadwal kalender dasar. */
 export function applyScheduleState(plan: Plan, state: ScheduleState, raceIso: IsoDate): Plan {
   const lastAllowed = addDays(raceIso, -1);
   let weeks: PlanWeek[] = plan.weeks.map((w) => ({
     ...w,
-    sessions: w.sessions.map((s) => {
-      if (s.kind === 'race') return s;
-      let date = state.overrides[s.id] ?? addDays(s.baseDate, state.shift);
-      if (dayNum(date) > dayNum(lastAllowed)) date = lastAllowed;
-      return { ...s, date };
-    }),
+    sessions: state.customOnly
+      ? w.sessions.filter((s) => s.kind === 'race')
+      : w.sessions.map((s) => {
+          if (s.kind === 'race') return s;
+          let date = state.overrides[s.id] ?? addDays(s.baseDate, state.shift);
+          if (dayNum(date) > dayNum(lastAllowed)) date = lastAllowed;
+          return { ...s, date };
+        }),
   }));
+
+  const insertOverlay = (overlay: PlanSession[], replaceRaceOnMatch: boolean) => {
+    if (overlay.length === 0 || weeks.length === 0) return;
+    const coveredDates = new Set(overlay.filter((s) => s.kind !== 'race').map((s) => s.date));
+    const hasCustomRace = replaceRaceOnMatch && overlay.some((s) => s.kind === 'race');
+    weeks = weeks.map((w) => ({
+      ...w,
+      sessions: w.sessions.filter((s) => {
+        if (s.kind === 'race') return !hasCustomRace;
+        return !coveredDates.has(s.date);
+      }),
+    }));
+    for (const item of overlay) {
+      let targetIdx = weeks.findIndex((w) => dayNum(w.startIso) <= dayNum(item.date) && dayNum(item.date) <= dayNum(w.endIso));
+      if (targetIdx < 0) {
+        targetIdx = dayNum(item.date) < dayNum(weeks[0].startIso) ? 0 : weeks.length - 1;
+      }
+      const targetWeek = weeks[targetIdx];
+      const phase: Phase = item.kind === 'race' ? 'race' : targetWeek.phase === 'race' ? 'build' : targetWeek.phase;
+      weeks[targetIdx] = {
+        ...targetWeek,
+        sessions: [...targetWeek.sessions, { ...item, weekNo: targetWeek.weekNo, phase }],
+      };
+    }
+    weeks = weeks.map((w) => ({
+      ...w,
+      sessions: [...w.sessions].sort(
+        (a, b) => dayNum(a.date) - dayNum(b.date) || (a.kind === 'race' ? 1 : b.kind === 'race' ? -1 : 0),
+      ),
+    }));
+  };
 
   if (state.aiSessions && state.aiSessions.length > 0 && weeks.length > 0) {
     const aiMapped: PlanSession[] = [];
@@ -598,31 +925,16 @@ export function applyScheduleState(plan: Plan, state: ScheduleState, raceIso: Is
       if (dayNum(date) > dayNum(lastAllowed)) date = lastAllowed;
       aiMapped.push({ ...s, date });
     }
-    if (aiMapped.length > 0) {
-      const coveredDates = new Set(aiMapped.map((s) => s.date));
-      weeks = weeks.map((w) => ({
-        ...w,
-        sessions: w.sessions.filter((s) => s.kind === 'race' || !coveredDates.has(s.date)),
-      }));
-      for (const ai of aiMapped) {
-        let targetIdx = weeks.findIndex((w) => dayNum(w.startIso) <= dayNum(ai.date) && dayNum(ai.date) <= dayNum(w.endIso));
-        if (targetIdx < 0) {
-          targetIdx = dayNum(ai.date) < dayNum(weeks[0].startIso) ? 0 : weeks.length - 1;
-        }
-        const targetWeek = weeks[targetIdx];
-        const phase: Phase = targetWeek.phase === 'race' ? 'build' : targetWeek.phase;
-        weeks[targetIdx] = {
-          ...targetWeek,
-          sessions: [...targetWeek.sessions, { ...ai, weekNo: targetWeek.weekNo, phase }],
-        };
-      }
-      weeks = weeks.map((w) => ({
-        ...w,
-        sessions: [...w.sessions].sort(
-          (a, b) => dayNum(a.date) - dayNum(b.date) || (a.kind === 'race' ? 1 : b.kind === 'race' ? -1 : 0),
-        ),
-      }));
-    }
+    insertOverlay(aiMapped, false);
+  }
+
+  if (state.customSessions && state.customSessions.length > 0 && weeks.length > 0) {
+    const customMapped: PlanSession[] = state.customSessions.map((s) => {
+      let date = state.overrides[s.id] ?? s.date;
+      if (s.kind !== 'race' && dayNum(date) > dayNum(lastAllowed)) date = lastAllowed;
+      return { ...s, date };
+    });
+    insertOverlay(customMapped, true);
   }
 
   return { ...plan, weeks };

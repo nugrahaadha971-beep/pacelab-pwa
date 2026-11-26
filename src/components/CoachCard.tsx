@@ -3,7 +3,7 @@ import { Activity, ChevronDown, Heart, RefreshCw, Sparkles } from 'lucide-react'
 import type { UserProfile, Workout } from '../analytics/types';
 import { acwr, cardiacDrift, DAY_MS, efTrend } from '../analytics/workload';
 import type { AcwrStatus } from '../analytics/workload';
-import { predictAll, velocityFor, ZONE_FRACTION } from '../analytics/predictor';
+import { velocityFor, ZONE_FRACTION } from '../analytics/predictor';
 import { coachAdvice, DRIFT_WARN_PCT } from '../analytics/coachEngine';
 import {
   loadCachedAiCoachAnalysis,
@@ -11,10 +11,8 @@ import {
   parseCoachPoints,
   requestAiCoachAnalysis,
 } from '../analytics/aiCoach';
-import { mafHr, mafTests } from '../plans/maf';
 import { fmtPace } from '../plans/pace';
-import { resolvePlan, selectBestPlan } from '../plans/planSelector';
-import { loadMafAdj, loadPlanMode } from '../plans/scheduleStore';
+import { loadScheduleState } from '../plans/scheduleStore';
 import { stripMarkdown } from '../analytics/raceDayAnalyzer';
 import AiLoader from './AiLoader';
 import { Button, StatusPill, type Tone } from './ui';
@@ -168,7 +166,6 @@ function buildFriendlyAdvice(
   status: AcwrStatus,
   session: ReturnType<typeof coachAdvice>['session'],
   durationAddMin: number,
-  curriculum: ReturnType<typeof resolvePlan>,
   driftHigh: boolean,
 ): string {
   const driftNote = driftHigh
@@ -185,15 +182,9 @@ function buildFriendlyAdvice(
         driftNote
       );
     case 'undertraining':
-      if (curriculum === 'maf') {
-        return `Beban latihan minggu ini tergolong ringan. Tambah durasi lari santai sekitar ${durationAddMin || 10} menit di zona detak jantung nyaman.${driftNote}`;
-      }
       return `Beban latihan minggu ini tergolong ringan. Anda bisa menambah durasi lari santai sekitar ${durationAddMin || 10} menit secara bertahap.${driftNote}`;
     case 'sweet_spot':
     default:
-      if (curriculum === 'maf') {
-        return `Kondisi beban tubuh seimbang dan aman. Lanjutkan lari di zona detak jantung nyaman tanpa mengejar kecepatan.${driftNote}`;
-      }
       return (
         (session === 'tempo'
           ? 'Kondisi beban tubuh seimbang dan aman. Anda siap melanjutkan progres sesuai jadwal latihan.'
@@ -217,11 +208,7 @@ export default function CoachCard({
   const ef = efTrend(workouts, t);
   const last = [...workouts].sort((a, b) => b.date - a.date)[0];
   const drift = last ? cardiacDrift(last.laps) : null;
-  const preds = predictAll(workouts, t);
-  const curriculum = resolvePlan(
-    loadPlanMode(),
-    selectBestPlan(workouts, profile, { now: t, projected5kSec: preds['5K']?.finalSec ?? null }),
-  );
+  const scheduleState = loadScheduleState();
   const advice = coachAdvice({
     acwrStatus: load.status,
     acwrRatio: load.ratio,
@@ -229,11 +216,11 @@ export default function CoachCard({
     lastType: last?.workoutType ?? null,
     daysSinceLast: last ? (t - last.date) / DAY_MS : null,
     lastDrift: drift,
-    curriculum,
+    curriculum: 'custom',
   });
   const meta = STATUS_BADGE[load.status];
   const driftHigh = drift != null && drift > DRIFT_WARN_PCT;
-  const friendlySummary = buildFriendlyAdvice(load.status, advice.session, advice.durationAddMin, curriculum, driftHigh);
+  const friendlySummary = buildFriendlyAdvice(load.status, advice.session, advice.durationAddMin, driftHigh);
 
   const [hasApiKey, setHasApiKey] = useState(() => Boolean(loadGeminiApiKey()));
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
@@ -263,9 +250,6 @@ export default function CoachCard({
     if (cached) setAiResult(cached);
   }, [workouts, load.ratio, load.status]);
 
-  const maf = mafHr(profile.age, loadMafAdj());
-  const mafPts = mafTests(workouts, maf);
-  const latestMafPaceSec = mafPts.length ? mafPts[mafPts.length - 1].paceSecPerKm : null;
   const canAnalyzeAi = hasApiKey && isOnline && !aiLoading;
 
   const handleAnalyzeAi = async (forceRefresh = false) => {
@@ -277,10 +261,11 @@ export default function CoachCard({
       const text = await requestAiCoachAnalysis(
         {
           profile,
-          curriculum,
+          curriculum: 'custom',
+          programTitle: scheduleState.programTitle,
           acwr: load,
           efTrend: ef,
-          latestMafPaceSec,
+          latestMafPaceSec: null,
           workouts,
           now: t,
         },

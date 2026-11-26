@@ -6,8 +6,7 @@ import QuickLog from './QuickLog';
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /**
- * Sheet "Catat sesi" yang dipicu dari tombol + Volt Lime di floating dock.
- * Isi sheet adalah QuickLog (catat manual & impor file); menutup otomatis setelah simpan.
+ * Sheet "Catat Lari" yang dipicu dari tombol + Electric Lime di navigasi atau CTA Beranda.
  */
 export default function CatatSheet({
   profile,
@@ -50,27 +49,30 @@ export default function CatatSheet({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm sm:items-center sm:p-4"
+      onClick={onClose}
+    >
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="catat-judul"
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-white/10 bg-[#111216] px-4 pt-3 shadow-2xl"
+        className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-t-3xl border border-white/10 bg-[#121215] px-5 pt-3 shadow-2xl sm:rounded-3xl sm:pt-5"
         style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
       >
-        <div aria-hidden className="mx-auto mb-3 h-1 w-9 rounded-full bg-[#272A35]" />
-        <div className="mb-3 flex items-center justify-between">
-          <h2 id="catat-judul" className="font-display text-lg font-bold text-white">Catat Sesi</h2>
+        <div aria-hidden className="mx-auto mb-3 h-1 w-9 rounded-full bg-[#27272E] sm:hidden" />
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 id="catat-judul" className="font-display text-lg font-bold text-white">Catat Lari</h2>
           <button
             ref={closeRef}
             type="button"
             onClick={onClose}
             aria-label="Tutup"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-slate-300 hover:bg-[#191B22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-volt"
+            className="flex h-11 w-11 items-center justify-center rounded-full text-zinc-400 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
           >
-            <X size={22} aria-hidden />
+            <X size={20} aria-hidden />
           </button>
         </div>
         <QuickLog profile={profile} onSaved={onSaved} onDone={onClose} />

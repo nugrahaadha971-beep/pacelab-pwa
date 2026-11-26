@@ -267,7 +267,7 @@ export function SegmentedTabs<T extends string>({
           aria-controls={`${idBase}-panel-${t.id}`}
           onClick={() => onChange(t.id)}
           className={cx(
-            'min-h-[40px] whitespace-nowrap rounded-xl px-3 font-display text-sm font-bold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]',
+            'min-h-[44px] whitespace-nowrap rounded-xl px-3 font-display text-sm font-bold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]',
             value === t.id ? 'bg-[#BEF264] text-[#09090B] shadow-sm' : 'text-zinc-400 hover:text-zinc-100',
           )}
         >
