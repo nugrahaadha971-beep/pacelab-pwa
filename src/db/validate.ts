@@ -70,14 +70,36 @@ export function normalizeProfile(raw: unknown): UserProfile | null {
     age: raw.age,
     restingHr: raw.restingHr,
     maxHr: raw.maxHr,
+    ...(raw.sex === 'male' || raw.sex === 'female' ? { sex: raw.sex } : {}),
     targetDistance: raw.targetDistance as RaceDistance,
     targetRaceDate: typeof raw.targetRaceDate === 'number' && Number.isFinite(raw.targetRaceDate) ? raw.targetRaceDate : 0,
     targetTimeSec: raw.targetTimeSec,
     ...(pos(raw.weeklyTargetKm) ? { weeklyTargetKm: raw.weeklyTargetKm } : {}),
+    ...(raw.hrMethod === 'hrr' || raw.hrMethod === 'hrmax' ? { hrMethod: raw.hrMethod } : {}),
   };
 }
 
-export interface ParsedBackup { workouts: Workout[]; profile: UserProfile | null; skipped: number; schedule: ScheduleState | null }
+/** Preferensi localStorage yang ikut cadangan. API key Gemini sengaja TIDAK ikut. */
+export const PREF_KEYS = ['pacelab_shoes', 'pacelab.planMode', 'pacelab.mafAdj', 'pacelab.k5'] as const;
+const MAX_PREF_LEN = 200_000;
+
+export function normalizePrefs(raw: unknown): Record<string, string> | null {
+  if (!isObj(raw)) return null;
+  const out: Record<string, string> = {};
+  for (const k of PREF_KEYS) {
+    const v = raw[k];
+    if (typeof v === 'string' && v.length <= MAX_PREF_LEN) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+export interface ParsedBackup {
+  workouts: Workout[];
+  profile: UserProfile | null;
+  skipped: number;
+  schedule: ScheduleState | null;
+  prefs: Record<string, string> | null;
+}
 
 export function parseBackup(data: unknown): ParsedBackup {
   if (!isObj(data) || data.app !== 'pacelab' || !Array.isArray(data.workouts)) {
@@ -91,7 +113,13 @@ export function parseBackup(data: unknown): ParsedBackup {
     else skipped++;
   }
   const rawProfile = Array.isArray(data.userProfile) ? data.userProfile[0] : data.userProfile;
-  return { workouts, profile: normalizeProfile(rawProfile), skipped, schedule: normalizeScheduleState(data.schedule) };
+  return {
+    workouts,
+    profile: normalizeProfile(rawProfile),
+    skipped,
+    schedule: normalizeScheduleState(data.schedule),
+    prefs: normalizePrefs(data.prefs),
+  };
 }
 
 type Key = Pick<Workout, 'date' | 'distanceKm'>;
@@ -99,4 +127,17 @@ type Key = Pick<Workout, 'date' | 'distanceKm'>;
 /** Sesi dianggap sama bila mulainya berselisih ≤ 2 menit dan jaraknya ≤ 0,1 km (FIT dan GPX dari lari yang sama). */
 export function isDuplicate(existing: Key[], d: Key): boolean {
   return existing.some((w) => Math.abs(w.date - d.date) <= 120_000 && Math.abs(w.distanceKm - d.distanceKm) <= 0.1);
+}
+
+/** Menggabungkan sesi masuk dengan daftar sesi yang sudah ada, melewati duplikat via `isDuplicate`. */
+export function mergeWorkouts(existing: ReadonlyArray<Workout>, incoming: ReadonlyArray<Workout>): Workout[] {
+  const pool: Key[] = existing.map((w) => ({ date: w.date, distanceKm: w.distanceKm }));
+  const fresh: Workout[] = [];
+  for (const w of incoming) {
+    if (!isDuplicate(pool, w)) {
+      pool.push({ date: w.date, distanceKm: w.distanceKm });
+      fresh.push(w);
+    }
+  }
+  return fresh;
 }

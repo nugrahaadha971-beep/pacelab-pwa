@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isDuplicate, normalizeProfile, normalizeWorkout, parseBackup } from './validate.ts';
+import { isDuplicate, mergeWorkouts, normalizeProfile, normalizeWorkout, parseBackup, PREF_KEYS } from './validate.ts';
 
 const W = { date: 1_700_000_000_000, source: 'fit', workoutType: 'easy', distanceKm: 5, durationSec: 1500 };
 const P = { id: 'default', age: 30, restingHr: 55, maxHr: 187, targetDistance: '10K', targetRaceDate: 0, targetTimeSec: 3000 };
@@ -46,3 +46,43 @@ test('isDuplicate: toleransi 2 menit dan 0,1 km', () => {
   assert.equal(isDuplicate(ex, { date: 1_000_000 + 300_000, distanceKm: 5 }), false);
   assert.equal(isDuplicate(ex, { date: 1_000_000, distanceKm: 6 }), false);
 });
+
+test('normalizeProfile: menerima sex male/female dan mengabaikan nilai tidak dikenal', () => {
+  assert.equal(normalizeProfile({ ...P, sex: 'female' })?.sex, 'female');
+  assert.equal(normalizeProfile({ ...P, sex: 'male' })?.sex, 'male');
+  assert.equal(normalizeProfile({ ...P, sex: 'other' })?.sex, undefined);
+});
+
+test('parseBackup membaca prefs (sepatu, mode, k5) dan membuang kunci asing seperti API key', () => {
+  const r = parseBackup({
+    app: 'pacelab',
+    workouts: [],
+    prefs: { pacelab_shoes: '[]', 'pacelab.k5': '00:25:00', pacelab_gemini_api_key: 'RAHASIA', x: 1 },
+  });
+  assert.deepEqual(r.prefs, { pacelab_shoes: '[]', 'pacelab.k5': '00:25:00' });
+  assert.equal(parseBackup({ app: 'pacelab', workouts: [] }).prefs, null);
+});
+
+test('PREF_KEYS sinkron dengan konstanta kunci penyimpanan', async () => {
+  const { SHOES_KEY } = await import('../plans/shoeStore.ts');
+  const { PLAN_MODE_KEY, MAF_ADJ_KEY } = await import('../plans/scheduleStore.ts');
+  const { K5_KEY } = await import('../plans/k5Store.ts');
+  assert.deepEqual([...PREF_KEYS].sort(), [SHOES_KEY, PLAN_MODE_KEY, MAF_ADJ_KEY, K5_KEY].sort());
+});
+
+test('mergeWorkouts: menggabungkan sesi baru dan melewati duplikat', () => {
+  const base = normalizeWorkout(W)!;
+  const dup = normalizeWorkout({ ...W, date: W.date + 60_000, distanceKm: 5.05 })!;
+  const fresh = normalizeWorkout({ ...W, date: W.date + 86_400_000, distanceKm: 8 })!;
+  const added = mergeWorkouts([base], [dup, fresh]);
+  assert.equal(added.length, 1);
+  assert.equal(added[0].distanceKm, 8);
+});
+
+test('normalizeProfile menjaga hrMethod yang valid dan membuang yang lain', () => {
+  assert.equal(normalizeProfile({ ...P, hrMethod: 'hrmax' })?.hrMethod, 'hrmax');
+  assert.equal(normalizeProfile({ ...P, hrMethod: 'hrr' })?.hrMethod, 'hrr');
+  assert.equal(normalizeProfile({ ...P, hrMethod: 'x' })?.hrMethod, undefined);
+  assert.equal(normalizeProfile(P)?.hrMethod, undefined);
+});
+

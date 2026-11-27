@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import { db } from '../db/database';
+import { editWorkout } from '../db/workoutEdit';
 import type { UserProfile, Workout, WorkoutType } from '../analytics/types';
 import { currentVdot, PENALTY_RULES, predictAll, RACE_KM, velocityFor, ZONE_FRACTION } from '../analytics/predictor';
 import { analyzeWorkoutSession } from '../analytics/sessionAnalysis';
@@ -8,6 +9,7 @@ import { DAY_MS } from '../analytics/workload';
 import { parseDuration } from '../parsers/manual';
 import { applyAdaptation, evaluateAdaptation, gatherAdaptiveInput } from '../plans/adaptiveEngine';
 import { resolveMaxHr } from '../plans/hrZones';
+import { loadK5 } from '../plans/k5Store';
 import { fmtPace, nearestRow, paceSecPerKm } from '../plans/pace';
 import { applyScheduleState, buildPlan, completedIds, flattenPlan, isoFromLocal, isoFromRaceTs, type PlanSession } from '../plans/schedule';
 import { loadScheduleState } from '../plans/scheduleStore';
@@ -15,7 +17,7 @@ import { loadShoes } from '../plans/shoeStore';
 import { fmtDate, fmtHms, todayStr } from './format';
 import { filterWorkouts, type DistFilter, type SourceFilter, type TypeFilter } from './historyFilter';
 import { SessionDetailView } from './SessionAnalysisTab';
-import { Button, ScreenHeader, SelectField } from './ui';
+import { Button, Field, ScreenHeader, SelectField } from './ui';
 import ConfirmDialog from './ConfirmDialog';
 import Sheet from './Sheet';
 
@@ -59,8 +61,7 @@ function buildAnalysisContext(profile: UserProfile, workouts: Workout[]) {
 
   const vd = currentVdot(workouts, now);
   const easyVdot = vd != null ? 60000 / velocityFor(vd, ZONE_FRACTION.easy) : 360;
-  let saved: string | null = null;
-  try { saved = localStorage.getItem('pacelab.k5'); } catch { /* ignore */ }
+  const saved = loadK5();
   const k5 = parseDuration(saved ?? (preds['5K'] ? fmtHms(preds['5K'].finalSec) : ''));
   const row = k5 != null ? nearestRow(k5) : null;
   const easyPace = paceSecPerKm('rec', row) ?? easyVdot;
@@ -258,7 +259,10 @@ export default function Riwayat({ profile, workouts, reload }: { profile: UserPr
           analysisCtx={analysisCtx}
           onClose={() => setSel(null)}
           onDelete={() => setAsk(sel)}
-          onSaved={reload}
+          onSaved={(updated) => {
+            setSel(updated);
+            reload();
+          }}
         />
       )}
       {ask && (
@@ -312,6 +316,15 @@ function FilterPanel({ q, sorted, initial, onApply, onClose }: { q: string; sort
   );
 }
 
+const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+function maskDuration(raw: string): string {
+  const d = raw.replace(/\D/g, '').replace(/^0+/, '').slice(-6);
+  if (d === '') return '';
+  const p = d.padStart(6, '0');
+  return `${p.slice(0, 2)}:${p.slice(2, 4)}:${p.slice(4)}`;
+}
+
 function Detail({
   w,
   analysisCtx,
@@ -323,13 +336,20 @@ function Detail({
   analysisCtx: ReturnType<typeof buildAnalysisContext>;
   onClose: () => void;
   onDelete: () => void;
-  onSaved: () => void;
+  onSaved: (updated: Workout) => void;
 }) {
+  const isManual = w.source === 'manual';
+  const origDateStr = isoFromLocal(w.date);
+  const [dateStr, setDateStr] = useState(origDateStr);
+  const [distanceText, setDistanceText] = useState(w.distanceKm.toFixed(2));
+  const [durationText, setDurationText] = useState(fmtHms(w.durationSec));
+  const [rpe, setRpe] = useState<number | null>(w.rpe);
   const [note, setNote] = useState(w.note ?? '');
   const [type, setType] = useState<WorkoutType>(w.workoutType);
   const [shoes] = useState(() => loadShoes());
   const [shoeId, setShoeId] = useState(w.shoeId ?? '');
   const [saved, setSaved] = useState(false);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const selectableShoes = shoes.filter((s) => !s.retired || s.id === w.shoeId);
   const analysis = useMemo(
@@ -338,10 +358,54 @@ function Detail({
   );
 
   const save = async () => {
-    if (w.id == null) return;
-    await db.workouts.update(w.id, { note: note.trim(), workoutType: type, shoeId: shoeId || undefined });
-    setSaved(true);
-    onSaved();
+    setErrMsg(null);
+    setSaved(false);
+    const today = todayStr();
+    if (!dateStr || dateStr > today) {
+      setErrMsg('Tanggal sesi tidak valid atau melebihi hari ini.');
+      return;
+    }
+    const nextDate =
+      dateStr === origDateStr
+        ? w.date
+        : dateStr === today
+          ? Date.now()
+          : new Date(`${dateStr}T12:00:00`).getTime();
+
+    const parsedDuration = isManual ? parseDuration(durationText) : w.durationSec;
+    if (parsedDuration == null || parsedDuration <= 0) {
+      setErrMsg('Durasi harus lebih dari 00:00:00 (format jam:menit:detik).');
+      return;
+    }
+    const parsedDistance = isManual ? Number(distanceText.replace(',', '.')) : w.distanceKm;
+    if (!Number.isFinite(parsedDistance) || parsedDistance <= 0 || parsedDistance > 300) {
+      setErrMsg('Jarak harus antara 0 dan 300 km.');
+      return;
+    }
+    if (w.avgHr == null && rpe == null) {
+      setErrMsg('Sesi tanpa data HR wajib memiliki skala RPE (1–10).');
+      return;
+    }
+
+    try {
+      const updated = await editWorkout(
+        w,
+        {
+          date: nextDate,
+          distanceKm: parsedDistance,
+          durationSec: parsedDuration,
+          rpe,
+          workoutType: type,
+          note,
+          shoeId: shoeId || undefined,
+        },
+        analysisCtx.profile,
+      );
+      setSaved(true);
+      onSaved(updated);
+    } catch (err) {
+      setErrMsg(err instanceof Error ? err.message : 'Gagal menyimpan perubahan sesi.');
+    }
   };
 
   return (
@@ -376,10 +440,64 @@ function Detail({
             <ChevronDown className="h-4 w-4 text-zinc-400 transition-transform group-open:rotate-180" aria-hidden />
           </summary>
           <div className="space-y-3 border-t border-white/[0.06] p-3.5">
+            <Field
+              label="Tanggal"
+              type="date"
+              value={dateStr}
+              max={todayStr()}
+              onChange={(e) => { setDateStr(e.target.value); setSaved(false); setErrMsg(null); }}
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="Jarak"
+                term="km"
+                inputMode="decimal"
+                disabled={!isManual}
+                value={distanceText}
+                onChange={(e) => { setDistanceText(e.target.value); setSaved(false); setErrMsg(null); }}
+                hint={!isManual ? 'Terkunci pada sesi impor' : undefined}
+              />
+              <Field
+                label="Durasi"
+                term="HH:MM:SS"
+                inputMode="numeric"
+                disabled={!isManual}
+                value={durationText}
+                onChange={(e) => { setDurationText(maskDuration(e.target.value)); setSaved(false); setErrMsg(null); }}
+                hint={!isManual ? 'Terkunci pada sesi impor' : undefined}
+              />
+            </div>
+
+            <div>
+              <div className="text-sm font-semibold text-zinc-200">
+                Tingkat usaha <span className="font-normal text-zinc-400">(RPE 1–10)</span>
+              </div>
+              <div role="radiogroup" aria-label="Tingkat berat sesi, 1 sampai 10" className="mt-1.5 grid grid-cols-5 gap-1.5">
+                {RPE_VALUES.map((n) => {
+                  const on = rpe === n;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => { setRpe(on && w.avgHr != null ? null : n); setSaved(false); setErrMsg(null); }}
+                      className={`min-h-[44px] rounded-xl border font-mono text-sm font-bold tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                        on ? 'border-transparent bg-[#BEF264] text-[#09090B]' : 'border-white/10 bg-[#121215] text-zinc-300 hover:border-white/20'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <SelectField
               label="Jenis sesi"
               value={type}
-              onChange={(e) => { setType(e.target.value as WorkoutType); setSaved(false); }}
+              onChange={(e) => { setType(e.target.value as WorkoutType); setSaved(false); setErrMsg(null); }}
             >
               {TYPE_IDS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
             </SelectField>
@@ -388,7 +506,7 @@ function Detail({
               <SelectField
                 label="Sepatu"
                 value={shoeId}
-                onChange={(e) => { setShoeId(e.target.value); setSaved(false); }}
+                onChange={(e) => { setShoeId(e.target.value); setSaved(false); setErrMsg(null); }}
               >
                 <option value="">Otomatis (Sepatu Utama)</option>
                 {selectableShoes.map((s) => (
@@ -403,12 +521,17 @@ function Detail({
               Catatan
               <textarea
                 value={note}
-                onChange={(e) => { setNote(e.target.value); setSaved(false); }}
+                onChange={(e) => { setNote(e.target.value); setSaved(false); setErrMsg(null); }}
                 rows={2}
                 className={textareaCls}
               />
             </label>
 
+            {errMsg && (
+              <p role="alert" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
+                {errMsg}
+              </p>
+            )}
             {saved && (
               <p role="status" className="rounded-2xl border border-[#BEF264]/25 bg-[#BEF264]/10 px-3 py-2 text-xs font-semibold text-[#BEF264]">
                 ✓ Perubahan tersimpan.

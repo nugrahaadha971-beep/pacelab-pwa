@@ -1,9 +1,12 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { clearAll, db, exportBackup, importBackup } from '../db/database';
+import { clearAll, db, exportBackup, importBackup, type ImportMode } from '../db/database';
+import { markBackupDone } from '../db/backupReminder';
 import { tanakaMaxHr } from '../analytics/workload';
 import { clearGeminiApiKey, loadGeminiApiKey, saveGeminiApiKey } from '../analytics/aiCoach';
-import type { RaceDistance, UserProfile, Workout } from '../analytics/types';
+import type { HrMethod, RaceDistance, Sex, UserProfile, Workout } from '../analytics/types';
+import { detectPeakHr } from '../plans/hrZones';
+import { HrZoneCard } from './HrZoneCard';
 import {
   addShoe,
   calcAllShoesMileage,
@@ -53,7 +56,10 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
   const [age, setAge] = useState(profile?.age ?? 0);
   const [auto, setAuto] = useState(() => !profile || profile.maxHr === tanakaMaxHr(profile.age));
   const [maxHrText, setMaxHrText] = useState(String(profile?.maxHr ?? ''));
+  const [restingText, setRestingText] = useState(String(profile?.restingHr ?? ''));
+  const [hrMethod, setHrMethod] = useState<HrMethod>(profile?.hrMethod ?? 'hrr');
   const [pendingImport, setPendingImport] = useState<File | null>(null);
+  const [importMode, setImportMode] = useState<ImportMode>('merge');
   const [askWipe, setAskWipe] = useState(false);
   const [geminiKey, setGeminiKey] = useState(() => loadGeminiApiKey());
   const [hasGeminiKey, setHasGeminiKey] = useState(() => Boolean(loadGeminiApiKey()));
@@ -68,20 +74,27 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
   const [editingShoeKm, setEditingShoeKm] = useState('');
   const [shoeMsg, setShoeMsg] = useState<Msg | null>(null);
 
+  const liveMaxHr = auto ? (age > 0 ? tanakaMaxHr(age) : null) : Number(maxHrText) > 0 ? Number(maxHrText) : null;
+  const liveRestingHr = Number(restingText) > 0 ? Number(restingText) : null;
+
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const restingHr = Number(f.get('restingHr'));
+    const restingHr = Number(restingText);
     const maxHr = auto ? tanakaMaxHr(age) : Number(maxHrText);
     const targetTimeSec = parseDuration(String(f.get('targetTime')));
     const weeklyRaw = String(f.get('weeklyTargetKm') ?? '').trim().replace(',', '.');
     const weekly = weeklyRaw === '' ? undefined : Number(weeklyRaw);
 
     const next: Errs = {};
-    if (!(age > 0)) next.age = 'Isi usia lebih dari 0.';
-    if (!(restingHr > 30)) next.restingHr = 'Resting HR harus lebih dari 30 bpm.';
-    if (!(maxHr > restingHr)) next.maxHr = 'Max HR harus lebih tinggi dari Resting HR.';
-    if (targetTimeSec == null) next.targetTime = 'Format jam:menit:detik, contoh 00:50:00.';
+    if (!(age >= 10 && age <= 100)) next.age = 'Usia harus 10–100 tahun.';
+    if (!(restingHr >= 30 && restingHr <= 120)) next.restingHr = 'Resting HR harus 30–120 bpm.';
+    if (!(maxHr > restingHr && maxHr <= 230)) {
+      next.maxHr = 'Max HR harus lebih tinggi dari Resting HR dan paling tinggi 230 bpm.';
+    }
+    if (targetTimeSec == null || targetTimeSec <= 0) {
+      next.targetTime = 'Format jam:menit:detik, contoh 00:50:00 (lebih dari 0).';
+    }
     if (weekly !== undefined && !(weekly > 0)) next.weeklyTargetKm = 'Isi angka lebih dari 0, atau kosongkan.';
     setErrs(next);
     setFormMsg(null);
@@ -89,7 +102,8 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
 
     try {
       await db.userProfile.put({
-        id: 'default', age, restingHr, maxHr,
+        id: 'default', age, restingHr, maxHr, hrMethod,
+        sex: (f.get('sex') as Sex) || 'male',
         targetDistance: f.get('target') as RaceDistance,
         targetRaceDate: Date.parse(String(f.get('raceDate'))) || 0,
         targetTimeSec,
@@ -108,6 +122,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
     const a = Object.assign(document.createElement('a'), { href: url, download: `pacelab-${new Date().toISOString().slice(0, 10)}.json` });
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    markBackupDone();
     setBackupMsg({ text: 'Cadangan diunduh.', ok: true });
   };
 
@@ -120,11 +135,20 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
 
   const doImport = async () => {
     const file = pendingImport;
+    const mode = importMode;
     setPendingImport(null);
     if (!file) return;
     try {
-      const r = await importBackup(await file.text());
-      setBackupMsg({ text: `${r.workouts} sesi dipulihkan.`, ok: true });
+      if (mode === 'replace') {
+        await exportJson();
+      }
+      const r = await importBackup(await file.text(), mode);
+      const parts = [mode === 'merge' ? `${r.workouts} sesi digabung` : `${r.workouts} sesi dipulihkan`];
+      if (r.skipped > 0) parts.push(`${r.skipped} sesi rusak dilewati`);
+      if (!r.profile && mode === 'replace') {
+        parts.push('profil lama dipertahankan (cadangan tidak memuat profil valid)');
+      }
+      setBackupMsg({ text: parts.join('; ') + '.', ok: true });
       onSaved();
     } catch (err) {
       setBackupMsg({ text: err instanceof Error ? err.message : 'Gagal mengimpor.', ok: false });
@@ -243,7 +267,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Usia" hint="Tahun" type="number" inputMode="numeric" value={age || ''} onChange={(e) => setAge(Number(e.target.value))} error={errs.age} />
-          <Field label="Resting HR" term="bpm" name="restingHr" type="number" inputMode="numeric" defaultValue={profile?.restingHr} error={errs.restingHr} />
+          <Field label="Resting HR" term="bpm" type="number" inputMode="numeric" value={restingText} onChange={(e) => setRestingText(e.target.value)} error={errs.restingHr} />
         </div>
 
         <label className="flex min-h-[44px] items-center gap-3 text-sm font-semibold text-zinc-200">
@@ -261,6 +285,11 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
           onChange={(e) => setMaxHrText(e.target.value)}
           error={errs.maxHr}
         />
+
+        <SelectField label="Jenis kelamin" hint="Dipakai untuk rumus beban latihan (TRIMP)." name="sex" defaultValue={profile?.sex ?? 'male'}>
+          <option value="male">Pria</option>
+          <option value="female">Wanita</option>
+        </SelectField>
 
         <div className="grid grid-cols-2 gap-3">
           <SelectField label="Jarak Target" name="target" defaultValue={profile?.targetDistance ?? '10K'}>
@@ -298,6 +327,15 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
         {formMsg && <Notice msg={formMsg} />}
         <PrimaryButton type="submit">Simpan profil</PrimaryButton>
       </form>
+
+      <HrZoneCard
+        maxHr={liveMaxHr}
+        restingHr={liveRestingHr}
+        method={hrMethod}
+        detectedMaxHr={detectPeakHr(workouts)}
+        onMethodChange={setHrMethod}
+        onUseDetected={(bpm) => { setAuto(false); setMaxHrText(String(bpm)); }}
+      />
 
       {/* Kartu 2: Pelatih AI (Gemini) */}
       <section className="space-y-3 sport-card p-5" aria-labelledby="gemini-coach-judul">
@@ -479,12 +517,34 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
 
       {pendingImport && (
         <ConfirmDialog id="impor" title="Pulihkan dari cadangan?" confirmLabel="Ya, pulihkan" onConfirm={doImport} onCancel={() => setPendingImport(null)}>
-          <p>Seluruh sesi di perangkat ini akan diganti dengan isi berkas <strong>{pendingImport.name}</strong>.</p>
+          <p>Berkas: <strong>{pendingImport.name}</strong></p>
+          <div role="radiogroup" aria-label="Mode pemulihan" className="mt-2 space-y-2 text-sm">
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-white/10 bg-[#18181D] p-2.5">
+              <input
+                type="radio"
+                name="import-mode"
+                checked={importMode === 'merge'}
+                onChange={() => setImportMode('merge')}
+                className="mt-0.5 h-4 w-4 accent-[#BEF264]"
+              />
+              <span><strong>Gabung</strong> — tambahkan sesi baru, lewati duplikat.</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-white/10 bg-[#18181D] p-2.5">
+              <input
+                type="radio"
+                name="import-mode"
+                checked={importMode === 'replace'}
+                onChange={() => setImportMode('replace')}
+                className="mt-0.5 h-4 w-4 accent-[#BEF264]"
+              />
+              <span><strong>Ganti semua</strong> — hapus sesi saat ini (salinan pengaman diunduh otomatis).</span>
+            </label>
+          </div>
         </ConfirmDialog>
       )}
       {askWipe && (
         <ConfirmDialog id="hapus-semua" title="Hapus semua data?" confirmLabel="Hapus semua" onConfirm={wipe} onCancel={() => setAskWipe(false)}>
-          <p>Semua sesi dan profil di perangkat ini akan dihapus permanen.</p>
+          <p>Semua sesi, profil, jadwal, data sepatu, dan API key Gemini di perangkat ini akan dihapus permanen.</p>
         </ConfirmDialog>
       )}
     </div>

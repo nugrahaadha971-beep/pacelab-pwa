@@ -6,11 +6,11 @@ import type { TestKind } from './progressive5k.ts';
 import { MAF_5K, MAF_RACE_STEPS } from './maf.ts';
 import { hrRange } from './hrZones.ts';
 import type { Zone } from './hrZones.ts';
-import { normalizeStructuredSteps } from './workoutBuilder.ts';
-import type { RepeatBlock, SingleStep, WorkoutBlock } from './workoutBuilder.ts';
+import { normalizeStructuredSteps } from './workoutTypes.ts';
+import type { RepeatBlock, SingleStep, WorkoutBlock } from './workoutTypes.ts';
 
 export type { RepeatBlock, SingleStep, WorkoutBlock };
-export type { WorkoutDurationType, WorkoutStepKind, WorkoutTargetType } from './workoutBuilder.ts';
+export type { DurationType, SessionCategory, StepKind, TargetType } from './workoutTypes.ts';
 
 export type CurriculumId = 'nike5k' | 'progressive5k' | 'maf' | 'custom';
 
@@ -62,6 +62,8 @@ export const dayNum = (iso: IsoDate): number => {
 export const fromDayNum = (n: number): IsoDate => new Date(n * DAY).toISOString().slice(0, 10);
 export const addDays = (iso: IsoDate, n: number): IsoDate => fromDayNum(dayNum(iso) + n);
 export const weekdayOf = (iso: IsoDate): number => new Date(dayNum(iso) * DAY).getUTCDay();
+/** Senin minggu yang memuat `iso`. */
+export const getMondayIso = (iso: IsoDate): IsoDate => addDays(iso, -((weekdayOf(iso) + 6) % 7));
 
 /** Tanggal lomba tersimpan sebagai UTC tengah malam (Date.parse('YYYY-MM-DD') di Profil.tsx). */
 export const isoFromRaceTs = (ts: number): IsoDate => new Date(ts).toISOString().slice(0, 10);

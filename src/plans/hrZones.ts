@@ -1,5 +1,7 @@
 // Zona detak jantung berbasis HR maks & Resting HR (Karvonen HRR). Murni (tanpa UI).
-import type { UserProfile, Workout } from '../analytics/types.ts';
+import type { HrMethod, UserProfile, Workout } from '../analytics/types.ts';
+
+export type { HrMethod };
 
 export type Zone = 'easy' | 'interval' | 'race' | 'test' | 'maf';
 export type HrZoneNumber = 1 | 2 | 3 | 4 | 5;
@@ -203,3 +205,54 @@ export function speedHrSegments({
     },
   ];
 }
+
+/**
+ * Resting HR yang dipakai untuk zona. Metode '% HRmaks' mengembalikan null sehingga semua fungsi di
+ * atas (calcHrZonePresetRange, formatHrWithZone, speedHrSegments) otomatis
+ * jatuh ke % HRmaks tanpa perubahan tanda tangan.
+ */
+export function zoneRestingHr(p: { restingHr: number; hrMethod?: HrMethod }): number | null {
+  return p.hrMethod === 'hrmax' ? null : p.restingHr;
+}
+
+export interface HrZoneRow {
+  zone: HrZoneNumber;
+  code: HrZonePreset['code'];
+  name: string;
+  /** Mis. "60–70% HRR" atau "60–70% HRmaks". */
+  pctLabel: string;
+  min: number;
+  max: number;
+  method: 'hrr' | 'max';
+}
+
+/** Tabel Z1–Z5 untuk kartu Profil. Kosong bila HR maks belum valid. */
+export function buildHrZoneTable(
+  maxHr: number | null | undefined,
+  restingHr: number | null | undefined,
+  method: HrMethod = 'hrr',
+): HrZoneRow[] {
+  const rest = method === 'hrmax' ? null : restingHr;
+  return HR_ZONE_PRESETS.flatMap((p) => {
+    const r = calcHrZonePresetRange(p.zone, maxHr, rest);
+    if (!r) return [];
+    const suffix = r.method === 'hrr' ? 'HRR' : 'HRmaks';
+    return [{ zone: p.zone, code: p.code, name: p.name, pctLabel: `${p.pctLabel} ${suffix}`, min: r.min, max: r.max, method: r.method }];
+  });
+}
+
+/**
+ * HR maks aktual dari rekor sesi (FIT/GPX). Lonjakan sensor optik (mis. 223 bpm sekali) tidak boleh
+ * langsung menjadi HR maks: bila nilai tertinggi lebih dari 5 bpm di atas nilai tertinggi kedua,
+ * pakai nilai kedua. Nilai di luar 120–230 bpm diabaikan.
+ */
+export function detectPeakHr(workouts: ReadonlyArray<{ maxHr?: number | null }>): number | null {
+  const peaks = workouts
+    .map((w) => w.maxHr)
+    .filter((h): h is number => typeof h === 'number' && Number.isFinite(h) && h >= 120 && h <= 230)
+    .sort((a, b) => b - a);
+  if (peaks.length === 0) return null;
+  if (peaks.length >= 2 && peaks[0] - peaks[1] > 5) return peaks[1];
+  return peaks[0];
+}
+

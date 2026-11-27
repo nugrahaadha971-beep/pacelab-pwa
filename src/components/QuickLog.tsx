@@ -19,6 +19,8 @@ const TYPES: { id: WorkoutType; label: string; desc: string }[] = [
 ];
 const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const CLOSE_DELAY_MS = 1200;
+const MIN_PACE_SEC = 120;  // 2:00 /km
+const MAX_PACE_SEC = 1200; // 20:00 /km
 
 type Tab = 'manual' | 'impor';
 interface Msg { text: string; ok: boolean }
@@ -201,8 +203,18 @@ export default function QuickLog({ profile, onSaved, onDone }: { profile: UserPr
     const distanceKm = Number(distance.replace(',', '.'));
     const next: Errs = {};
     if (!date || date > today) next.date = 'Tanggal tidak valid.';
-    if (durationSec == null) next.duration = 'Gunakan format jam:menit:detik (mis. 00:45:00).';
-    if (!(distanceKm > 0)) next.distance = 'Jarak harus lebih dari 0 km.';
+    if (durationSec == null || durationSec <= 0) {
+      next.duration = 'Durasi harus lebih dari 00:00:00 (jam:menit:detik).';
+    }
+    if (!(distanceKm > 0) || distanceKm > 300) {
+      next.distance = 'Jarak harus antara 0 dan 300 km.';
+    }
+    if (!next.duration && !next.distance && durationSec != null) {
+      const pace = durationSec / distanceKm;
+      if (pace < MIN_PACE_SEC || pace > MAX_PACE_SEC) {
+        next.duration = 'Pace tidak masuk akal (harus 2:00–20:00 /km). Periksa durasi dan jarak.';
+      }
+    }
     if (rpe == null) next.rpe = 'Pilih skala RPE (1–10).';
     setErrs(next);
     setMsg(null);

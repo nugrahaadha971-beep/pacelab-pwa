@@ -78,4 +78,40 @@ describe('gpxParser (analyzeGpxPoints)', () => {
     assert.equal(res.walkSec, 0);
     assert.equal(res.walkCount, 0);
   });
+
+  it('pace lap memakai waktu bergerak: berhenti 120 dtk tidak menggelembungkan lap', () => {
+    const pts: GpxPoint[] = [];
+    let t = Date.UTC(2026, 10, 1);
+    let lat = -6.2;
+    const push = () => pts.push({ lat, lon: 106.8, ele: 10, t, hr: 150, cad: 85 });
+    push();
+    for (let s = 0; s < 900; s++) {
+      if (s === 150) {
+        for (let k = 0; k < 120; k++) {
+          t += 1000;
+          push();
+        }
+      }
+      lat += 1000 / 300 / 111_320;
+      t += 1000;
+      push();
+    }
+    const r = analyzeGpxPoints(pts);
+    assert.ok(r.laps.length >= 2);
+    for (const l of r.laps) {
+      assert.ok(Math.abs(l.paceSec - 300) < 3, `pace lap ${l.paceSec}`);
+    }
+  });
+
+  it('cadence yang sudah spm (≥ 120) tidak dikali 2 lagi', () => {
+    const pts: GpxPoint[] = Array.from({ length: 400 }, (_, i) => ({
+      lat: -6.2 + (i * 3.3) / 111_320,
+      lon: 106.8,
+      ele: 10,
+      t: Date.UTC(2026, 10, 1) + i * 1000,
+      hr: 150,
+      cad: 172,
+    }));
+    assert.equal(analyzeGpxPoints(pts).avgCadence, 172);
+  });
 });

@@ -3,7 +3,8 @@ import type { AppTab } from '../App';
 import type { UserProfile, Workout } from '../analytics/types';
 import { DAY_MS } from '../analytics/workload';
 import { stripMarkdown } from '../analytics/raceDayAnalyzer';
-import { formatHrWithZone, resolveMaxHr, ZONE_LABEL } from '../plans/hrZones';
+import { backupOverdue } from '../db/backupReminder';
+import { formatHrWithZone, resolveMaxHr, ZONE_LABEL, zoneRestingHr } from '../plans/hrZones';
 import { formatDateId, isoFromRaceTs, remaining } from '../plans/schedule';
 import { calcAllShoesMileage, loadShoes } from '../plans/shoeStore';
 import { fmtHms, todayStr } from './format';
@@ -72,7 +73,7 @@ export default function Beranda({ profile, workouts, onNavigate }: BerandaProps)
   const maxHr = resolveMaxHr(profile, workouts);
   const hrTuple: [number, number] | null =
     next && s && next.hr ? [next.hr[0], s.hr?.[1] ?? next.hr[1]] : null;
-  const formattedHr = next && s ? formatHrWithZone(hrTuple, s.zone, maxHr, profile.restingHr) : null;
+  const formattedHr = next && s ? formatHrWithZone(hrTuple, s.zone, maxHr, zoneRestingHr(profile)) : null;
 
   const targetHrText =
     next && s
@@ -104,6 +105,25 @@ export default function Beranda({ profile, workouts, onNavigate }: BerandaProps)
   return (
     <div className="space-y-4">
       <ScreenHeader title="Beranda" subtitle="Ringkasan target, jadwal berikutnya & panduan latihan" />
+
+      {backupOverdue(workouts.length, now) && (
+        <section
+          aria-label="Pengingat cadangan data"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-sky-400/25 bg-sky-400/[0.07] px-4 py-3.5"
+        >
+          <p className="text-xs leading-relaxed text-zinc-200 sm:text-sm">
+            Terakhir mencadangkan &gt; 14 hari lalu. Buka <strong className="text-white">Profil → Cadangan</strong>.
+          </p>
+          <button
+            type="button"
+            onClick={() => onNavigate('profil')}
+            className="inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-2xl border border-sky-400/35 bg-sky-400/15 px-3.5 text-xs font-bold text-sky-300 transition hover:bg-sky-400/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+          >
+            <span>Buka Profil</span>
+            <ArrowRight size={13} aria-hidden />
+          </button>
+        </section>
+      )}
 
       {/* 1. Ringkasan Target & Progres Singkat */}
       <section aria-label="Ringkasan target dan progres singkat" className="sport-card p-5">

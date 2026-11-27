@@ -1,9 +1,9 @@
 import type { RaceDistance, UserProfile, Workout } from './types.ts';
 import {
   acwr,
-  cardiacDrift,
   DAY_MS,
   efTrend,
+  steadyDrift,
   type AcwrStatus,
 } from './workload.ts';
 import {
@@ -144,7 +144,7 @@ export function buildRaceDaySnapshot(input: RaceDayAnalyzerInput): RaceDaySnapsh
 
   const driftVals = last28
     .filter((w) => w.date <= now)
-    .map((w) => cardiacDrift(w.laps))
+    .map((w) => steadyDrift(w))
     .filter((d): d is number => d != null && Number.isFinite(d));
   const avgDriftPct =
     driftVals.length > 0 ? driftVals.reduce((s, d) => s + d, 0) / driftVals.length : null;
@@ -474,7 +474,7 @@ export async function requestRaceDayAnalysis(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetchFn('/api/race-day-analyze', {
+    const res = await fetchFn('api/race-day-analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

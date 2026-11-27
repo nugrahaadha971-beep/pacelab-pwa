@@ -1,11 +1,24 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import express from 'express';
-import { GoogleGenAI, Type } from '@google/genai';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { GoogleGenAI, Type, type GenerateContentConfig } from '@google/genai';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
-const MODEL = 'gemini-4-hydrogen';
+const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development';
+
+// Contoh .env: GEMINI_MODELS=gemini-2.5-flash,gemini-2.5-flash-lite (urut prioritas)
+const RAW_MODELS = (process.env.GEMINI_MODELS ?? process.env.GEMINI_MODEL ?? 'gemini-4-hydrogen')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
+const MODELS = RAW_MODELS.length > 0 ? RAW_MODELS : ['gemini-4-hydrogen'];
+
+const ALLOWED_DISTANCES = new Set(['5K', '10K', '21.1K', '42.2K']);
+const clean = (v: unknown, max = 80): string | null =>
+  typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) || null : null;
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 interface RaceDayRequestBody {
   snapshot?: {
@@ -30,6 +43,70 @@ interface RaceDayRequestBody {
   };
 }
 
+function sanitizeSnapshot(raw: RaceDayRequestBody['snapshot']) {
+  if (!raw || !ALLOWED_DISTANCES.has(String(raw.targetDistance)) || num(raw.estimatedFinishSec) == null) {
+    return null;
+  }
+  return {
+    targetDistance: String(raw.targetDistance),
+    raceDateIso: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.raceDateIso)) ? String(raw.raceDateIso) : null,
+    daysToRace: num(raw.daysToRace),
+    estimatedFinishTime: clean(raw.estimatedFinishTime, 12),
+    estimatedFinishSec: num(raw.estimatedFinishSec) as number,
+    targetPacePerKm: clean(raw.targetPacePerKm, 12),
+    acwrRatio: num(raw.acwrRatio),
+    acwrStatus: clean(raw.acwrStatus, 20),
+    avgDriftPct: num(raw.avgDriftPct),
+    efRecent: num(raw.efRecent),
+    efChangePct: num(raw.efChangePct),
+    mafHr: num(raw.mafHr),
+    mafPacePerKm: clean(raw.mafPacePerKm, 12),
+    raceHrRange: clean(raw.raceHrRange, 20),
+    weeklyKm28: num(raw.weeklyKm28) ?? 0,
+    longestRunKm28: num(raw.longestRunKm28) ?? 0,
+    primaryShoeSummary: clean(raw.primaryShoeSummary, 80),
+    sessionsCount: num(raw.sessionsCount) ?? 0,
+  };
+}
+
+// Pembatas laju sederhana (10 permintaan/menit/IP). Untuk multi-instance, pakai penyimpanan bersama.
+const hits = new Map<string, { n: number; reset: number }>();
+function rateLimit(req: Request, res: Response, next: NextFunction) {
+  const now = Date.now();
+  if (hits.size > 5000) hits.clear();
+  const key = req.ip ?? 'anon';
+  const h = hits.get(key);
+  if (!h || h.reset < now) {
+    hits.set(key, { n: 1, reset: now + 60_000 });
+    return next();
+  }
+  if (++h.n > 10) {
+    res.status(429).json({ code: 'rate_limited', error: 'Terlalu banyak permintaan. Coba lagi sebentar.' });
+    return;
+  }
+  next();
+}
+
+function httpStatusOf(err: unknown): number {
+  const direct = (err as { status?: unknown } | null)?.status;
+  if (typeof direct === 'number') return direct;
+  const m = err instanceof Error ? /\b([45]\d{2})\b/.exec(err.message) : null;
+  return m ? Number(m[1]) : 502;
+}
+
+async function generateWithFallback(ai: GoogleGenAI, contents: string, config: GenerateContentConfig) {
+  let lastErr: unknown;
+  for (const model of MODELS) {
+    try {
+      return { response: await ai.models.generateContent({ model, contents, config }), model };
+    } catch (err) {
+      lastErr = err;
+      if (![400, 404, 429, 503].includes(httpStatusOf(err))) throw err;
+    }
+  }
+  throw lastErr;
+}
+
 function createGeminiClient(): GoogleGenAI | null {
   const apiKey = (process.env.GEMINI_API_KEY ?? '').trim();
   if (!apiKey) return null;
@@ -45,9 +122,10 @@ function createGeminiClient(): GoogleGenAI | null {
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1); // di belakang proxy (AI Studio/Cloud Run) agar req.ip benar
   app.use(express.json({ limit: '256kb' }));
 
-  app.post('/api/race-day-analyze', async (req, res) => {
+  app.post('/api/race-day-analyze', rateLimit, async (req, res) => {
     const ai = createGeminiClient();
     if (!ai) {
       res.status(503).json({
@@ -57,12 +135,11 @@ async function startServer() {
       return;
     }
 
-    const body = (req.body ?? {}) as RaceDayRequestBody;
-    const s = body.snapshot;
-    if (!s || typeof s.targetDistance !== 'string' || typeof s.estimatedFinishSec !== 'number') {
+    const s = sanitizeSnapshot((req.body as RaceDayRequestBody | undefined)?.snapshot);
+    if (!s) {
       res.status(400).json({
         code: 'bad_request',
-        error: 'Payload snapshot lomba tidak lengkap.',
+        error: 'Payload snapshot lomba tidak lengkap atau tidak valid.',
       });
       return;
     }
@@ -79,9 +156,9 @@ async function startServer() {
       `- Efficiency Factor (EF) 14 hari: ${s.efRecent != null ? s.efRecent.toFixed(2) : 'Belum ada data'}${s.efChangePct != null ? ` (perubahan ${s.efChangePct > 0 ? '+' : ''}${s.efChangePct.toFixed(1)}%)` : ''}`,
       `- Zona HR Lomba: ${s.raceHrRange ?? 'Belum diatur'}`,
       `- Pace MAF terbaru: ${s.mafPacePerKm ?? 'Belum tercatat'} (HR MAF: ${s.mafHr ?? '-'})`,
-      `- Volume rata-rata 28 hari: ${(s.weeklyKm28 ?? 0).toFixed(1)} km/mgg · Long run terpanjang: ${(s.longestRunKm28 ?? 0).toFixed(1)} km`,
+      `- Volume rata-rata 28 hari: ${s.weeklyKm28.toFixed(1)} km/mgg · Long run terpanjang: ${s.longestRunKm28.toFixed(1)} km`,
       `- Sepatu utama: ${s.primaryShoeSummary ?? 'Belum diatur'}`,
-      `- Total sesi tercatat: ${s.sessionsCount ?? 0}`,
+      `- Total sesi tercatat: ${s.sessionsCount}`,
       '',
       'Instruksi ketat:',
       '1. Gunakan teks polos Bahasa Indonesia yang ringkas, padat, dan praktis. DILARANG memakai simbol Markdown (*, **, #, `).',
@@ -90,61 +167,59 @@ async function startServer() {
       '4. tacticalTips: 3 poin maksimal 1–2 baris per poin mencakup jadwal nutrisi/gel, manajemen tanjakan/cuaca via HR, dan kesiapan sepatu.',
     ].join('\n');
 
-    try {
-      const response = await ai.models.generateContent({
-        model: MODEL,
-        contents: prompt,
-        config: {
-          systemInstruction:
-            'Anda adalah pelatih lari jarak jauh dan ahli fisiologi olahraga. Kembalikan hanya JSON sesuai schema tanpa karakter bintang atau Markdown.',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              readinessStatus: {
-                type: Type.STRING,
-                enum: ['aman', 'waspada', 'risiko_tinggi'],
-                description: 'Status kesiapan fisik menjelang hari lomba.',
+    const config: GenerateContentConfig = {
+      systemInstruction:
+        'Anda adalah pelatih lari jarak jauh dan ahli fisiologi olahraga. Kembalikan hanya JSON sesuai schema tanpa karakter bintang atau Markdown.',
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          readinessStatus: {
+            type: Type.STRING,
+            enum: ['aman', 'waspada', 'risiko_tinggi'],
+            description: 'Status kesiapan fisik menjelang hari lomba.',
+          },
+          readinessHeadline: {
+            type: Type.STRING,
+            description: 'Satu kalimat ringkas kesimpulan kesiapan D-Day.',
+          },
+          healthWarnings: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: 'Peringatan kesehatan, risiko ACWR, kelelahan/drift, dan hidrasi/elektrolit.',
+          },
+          pacingStrategy: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                phase: { type: Type.STRING },
+                targetPace: { type: Type.STRING },
+                targetHr: { type: Type.STRING },
+                cue: { type: Type.STRING },
               },
-              readinessHeadline: {
-                type: Type.STRING,
-                description: 'Satu kalimat ringkas kesimpulan kesiapan D-Day.',
-              },
-              healthWarnings: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: 'Peringatan kesehatan, risiko ACWR, kelelahan/drift, dan hidrasi/elektrolit.',
-              },
-              pacingStrategy: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    phase: { type: Type.STRING },
-                    targetPace: { type: Type.STRING },
-                    targetHr: { type: Type.STRING },
-                    cue: { type: Type.STRING },
-                  },
-                  required: ['phase', 'targetPace', 'targetHr', 'cue'],
-                },
-                description: '3 fase strategi pacing: Awal, Pertengahan, Akhir (Negative Split).',
-              },
-              tacticalTips: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: 'Tips nutrisi/gel, manajemen tanjakan/cuaca, dan pengingat sepatu.',
-              },
+              required: ['phase', 'targetPace', 'targetHr', 'cue'],
             },
-            required: [
-              'readinessStatus',
-              'readinessHeadline',
-              'healthWarnings',
-              'pacingStrategy',
-              'tacticalTips',
-            ],
+            description: '3 fase strategi pacing: Awal, Pertengahan, Akhir (Negative Split).',
+          },
+          tacticalTips: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: 'Tips nutrisi/gel, manajemen tanjakan/cuaca, dan pengingat sepatu.',
           },
         },
-      });
+        required: [
+          'readinessStatus',
+          'readinessHeadline',
+          'healthWarnings',
+          'pacingStrategy',
+          'tacticalTips',
+        ],
+      },
+    };
+
+    try {
+      const { response, model } = await generateWithFallback(ai, prompt, config);
 
       const raw = (response.text ?? '').trim();
       if (!raw) {
@@ -155,23 +230,33 @@ async function startServer() {
         return;
       }
 
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      res.json({ analysis: parsed, model: MODEL });
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        res.status(502).json({
+          code: 'invalid_json',
+          error: 'Respons AI bukan JSON valid.',
+        });
+        return;
+      }
+      res.json({ analysis: parsed, model });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Gagal menghubungi Gemini API.';
-      const status = msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')
-        ? 429
-        : msg.includes('403') || msg.includes('PERMISSION_DENIED') || msg.includes('API_KEY_INVALID')
-          ? 403
-          : 502;
-      res.status(status).json({
-        code: status === 429 ? 'quota_exceeded' : status === 403 ? 'invalid_key' : 'api_error',
-        error: msg,
-      });
+      console.error('[race-day-analyze]', err);
+      const status = httpStatusOf(err);
+      if (status === 429) {
+        res.status(429).json({ code: 'quota_exceeded', error: 'Kuota AI habis. Coba lagi nanti.' });
+        return;
+      }
+      if (status === 401 || status === 403) {
+        res.status(403).json({ code: 'invalid_key', error: 'API key server ditolak.' });
+        return;
+      }
+      res.status(502).json({ code: 'api_error', error: 'Layanan AI sedang bermasalah.' });
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (isDev) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -180,6 +265,10 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.join(__dirname, 'dist');
+    if (!fs.existsSync(path.join(distDir, 'index.html'))) {
+      console.error('Folder dist/ belum ada. Jalankan "npm run build" sebelum "npm start".');
+      process.exit(1);
+    }
     app.use(express.static(distDir));
     app.get('/{*splat}', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));

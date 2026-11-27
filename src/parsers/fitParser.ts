@@ -10,6 +10,9 @@ const FIT_EPOCH_OFFSET = 631065600; // detik 1970-01-01 → 1989-12-31 (epoch FI
 const GMSG_SESSION = 18;
 const GMSG_RECORD = 20;
 const F_TIMESTAMP = 253;
+const F_SESSION_SPORT = 5;
+// FIT sport: 0 generic, 1 running, 11 walking, 17 hiking. Sepeda (2), renang (5), dll. ditolak.
+const ALLOWED_SPORTS = new Set([0, 1, 11, 17]);
 
 // Tipe dasar FIT (5 bit rendah). Nilai sentinel "invalid" mengikuti spesifikasi.
 const NUM_TYPES: Partial<Record<number, { signed: boolean; zeroInvalid?: boolean }>> = {
@@ -103,6 +106,10 @@ export function parseFit(buf: ArrayBuffer): Draft {
 
   const tsList = records.map((r) => r.ts).filter((t): t is number => t !== undefined);
   const sess: Vals = sessions[0] ?? {};
+  const sport = sess[F_SESSION_SPORT];
+  if (sport !== undefined && !ALLOWED_SPORTS.has(sport)) {
+    throw new Error('Berkas FIT ini bukan aktivitas lari/jalan (mis. sepeda atau renang).');
+  }
   const start = sess[2] ?? tsList[0];
   if (start === undefined) throw new Error('Berkas FIT tanpa waktu.');
 
@@ -117,20 +124,28 @@ export function parseFit(buf: ArrayBuffer): Draft {
   const cads = records.map((r) => r.cad).filter((x): x is number => x !== undefined);
   const cadPerFoot = sess[18] ?? mean(cads);
 
-  // Split per km dari record (sama seperti GPX)
+  // Split per km dari record (mengabaikan jeda/auto-pause agar lap pace akurat)
   const laps: LapSplit[] = [];
   let lapD0 = 0, lapT0 = tsList[0], hrSum = 0, hrN = 0;
+  let prevTs: number | undefined, prevD: number | undefined, lapPaused = 0;
   for (const r of records) {
     if (r.ts === undefined || r.dist === undefined) continue;
-    if (r.hr !== undefined) { hrSum += r.hr; hrN++; }
     const d = r.dist / 100;
+    if (prevTs !== undefined && prevD !== undefined) {
+      const dt = r.ts - prevTs;
+      if (dt > 10 && (d - prevD) / dt < 0.5) lapPaused += dt;
+    }
+    prevTs = r.ts;
+    prevD = d;
+    if (r.hr !== undefined) { hrSum += r.hr; hrN++; }
     if (d - lapD0 >= 1000 && lapT0 !== undefined) {
+      const movingLapSec = Math.max(1, r.ts - lapT0 - lapPaused);
       laps.push({
         km: laps.length + 1,
-        paceSec: ((r.ts - lapT0) * 1000) / (d - lapD0),
+        paceSec: (movingLapSec * 1000) / (d - lapD0),
         avgHr: hrN ? Math.round(hrSum / hrN) : null,
       });
-      lapD0 = d; lapT0 = r.ts; hrSum = 0; hrN = 0;
+      lapD0 = d; lapT0 = r.ts; hrSum = 0; hrN = 0; lapPaused = 0;
     }
   }
 
@@ -142,8 +157,8 @@ export function parseFit(buf: ArrayBuffer): Draft {
     avgPaceSecPerKm: durationSec / distanceKm,
     avgHr: sess[16] ?? (mean(hrs) != null ? Math.round(mean(hrs)!) : null),
     maxHr: sess[17] ?? (hrs.length ? Math.max(...hrs) : null),
-    // Asumsi sama dengan GPX: cadence per kaki dikali 2 untuk spm.
-    avgCadence: cadPerFoot != null ? Math.round(cadPerFoot * 2) : null,
+    // Cadence per kaki (< 120) dikali 2 untuk spm; >= 120 dianggap sudah spm.
+    avgCadence: cadPerFoot != null ? Math.round(cadPerFoot >= 120 ? cadPerFoot : cadPerFoot * 2) : null,
     elevationGain: sess[22] ?? null,
     laps,
   };

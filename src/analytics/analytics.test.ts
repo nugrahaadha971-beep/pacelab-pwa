@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tanakaMaxHr, banisterTrimp, sessionTrimp, acwr, efficiencyFactor, efTrend, DAY_MS } from './workload.ts';
+import { tanakaMaxHr, banisterTrimp, sessionTrimp, acwr, acwrHistoryDays, ACWR_MIN_HISTORY_DAYS, efficiencyFactor, efTrend, steadyDrift, DAY_MS } from './workload.ts';
 import { riegelProject, predictAll } from './predictor.ts';
 import { parseDuration } from '../parsers/manual.ts';
 import type { Workout } from './types';
@@ -69,4 +69,42 @@ test('Parser durasi HH:MM:SS dan MM:SS', () => {
   assert.equal(parseDuration('45:15'), 2715);
   assert.equal(parseDuration('1:75:00'), null);
   assert.equal(parseDuration(''), null);
+});
+
+test('ACWR: pengguna baru (< 14 hari riwayat) tidak dinilai Kelelahan tinggi', () => {
+  const now = Date.UTC(2026, 10, 26);
+  const p = { restingHr: 55, maxHr: 185 };
+  const baru = acwr([mk({ date: now - 1 * DAY_MS }), mk({ date: now - 3 * DAY_MS }), mk({ date: now - 5 * DAY_MS })], p, now);
+  assert.equal(baru.ratio, null);
+  assert.equal(baru.status, 'unknown');
+  assert.equal(acwrHistoryDays([mk({ date: now - 5 * DAY_MS })], now), 6);
+  assert.equal(ACWR_MIN_HISTORY_DAYS, 14);
+  const stabil = acwr(
+    Array.from({ length: 14 }, (_, i) => mk({ date: now - (i * 2 + 0.5) * DAY_MS, durationSec: 1800, avgHr: 140, rpe: 5 })),
+    p,
+    now,
+  );
+  assert.equal(stabil.status, 'sweet_spot');
+});
+
+test('Banister TRIMP wanita memakai koefisien 0,86 / 1,67 dan default tetap pria', () => {
+  const pria = banisterTrimp(60, 150, 55, 185);
+  const wanita = banisterTrimp(60, 150, 55, 185, 'female');
+  assert.equal(pria, banisterTrimp(60, 150, 55, 185, 'male'));
+  assert.notEqual(pria, wanita);
+  const dhr = (150 - 55) / (185 - 55);
+  assert.ok(Math.abs(wanita - 60 * dhr * 0.86 * Math.exp(1.67 * dhr)) < 1e-9);
+});
+
+test('steadyDrift hanya menghitung cardiac drift untuk sesi easy & long_run', () => {
+  const laps = [
+    { km: 1, paceSec: 360, avgHr: 140 },
+    { km: 2, paceSec: 360, avgHr: 142 },
+    { km: 3, paceSec: 360, avgHr: 152 },
+    { km: 4, paceSec: 360, avgHr: 156 },
+  ];
+  assert.ok(steadyDrift({ workoutType: 'easy', laps }) != null);
+  assert.ok(steadyDrift({ workoutType: 'long_run', laps }) != null);
+  assert.equal(steadyDrift({ workoutType: 'interval', laps }), null);
+  assert.equal(steadyDrift({ workoutType: 'tempo', laps }), null);
 });

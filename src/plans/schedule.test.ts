@@ -615,74 +615,62 @@ test('HR Zone presets, formatHrWithZone, dan speedHrSegments menghitung HRR & HR
   );
 });
 
-test('WorkoutStepBuilder: Norwegian 4x4 menghitung total durasi, jarak, HR utama, string steps, & profile bars', async () => {
+test('workoutTypes: Karvonen getZoneBpm, summarizeWorkout, WORKOUT_PRESETS, normalizeStructuredSteps, dan getMondayIso', async () => {
   const {
     WORKOUT_PRESETS,
-    summarizeStructuredWorkout,
-    buildWorkoutProfileBars,
-    formatStepDuration,
-    formatStepTarget,
-  } = await import('./workoutBuilder.ts');
-  const { addCustomSession } = await import('./schedule.ts');
+    getZoneBpm,
+    formatDuration,
+    formatTarget,
+    summarizeWorkout,
+    normalizeStructuredSteps,
+    categoryToKind,
+    kindToCategory,
+  } = await import('./workoutTypes.ts');
+  const { addCustomSession, getMondayIso } = await import('./schedule.ts');
 
-  const norwegian = WORKOUT_PRESETS.find((p) => p.id === 'norwegian4x4')!;
-  const blocks = norwegian.build();
+  assert.equal(getMondayIso('2026-11-26'), '2026-11-23');
+  assert.equal(getMondayIso('2026-11-23'), '2026-11-23');
+  assert.equal(categoryToKind('easy'), 'recovery');
+  assert.equal(kindToCategory('recovery'), 'easy');
 
-  // maxHr 185, restingHr 55 => HRR = 130
-  // Z2: 60-70% => 55 + 78..91 = 133..146 bpm
-  // Z4: 80-90% => 55 + 104..117 = 159..172 bpm
-  // Z1: 50-60% => 55 + 65..78 = 120..133 bpm
-  const summary = summarizeStructuredWorkout(blocks, {
-    maxHr: 185,
-    restingHr: 55,
-    referencePaceSecPerKm: 360,
-  });
+  // HRmax 195, Resting HR 58 => HRR = 137; Z2 (60-70%) => 140..154 bpm
+  assert.deepEqual(getZoneBpm(2, 195, 58), [140, 154]);
+  assert.deepEqual(getZoneBpm(4, 195, 58), [168, 181]);
 
-  // 10 + 4*(4+3) + 5 = 43 menit
+  const norwegian = WORKOUT_PRESETS.norwegian4x4;
+  const summary = summarizeWorkout(norwegian.blocks, 195, 58, 390);
+  // Warmup 10 + 4*(4+3) + Cooldown Open (5) = 43 menit
   assert.equal(summary.durationMin, 43);
-  assert.ok(summary.distanceKm != null && summary.distanceKm > 5);
-  assert.deepEqual(summary.hr, [159, 172]);
-  assert.deepEqual(summary.steps, [
-    'Warm Up: 10:00 · Z2 (133–146 bpm)',
-    '4x [Run 4:00 · Z4 (159–172 bpm) + Recover 3:00 · Z2 (133–146 bpm)]',
-    'Cool Down: 5:00 · Z1 (120–133 bpm)',
-  ]);
+  assert.ok(summary.distanceKm > 5);
+  assert.deepEqual(summary.hrRange, [166, 185]);
+  assert.equal(summary.steps.length, 3);
+  assert.match(summary.steps[1], /^4× \[/);
 
-  const bars = buildWorkoutProfileBars(blocks, 360);
-  // 1 warmup + (4 * 2 repeat steps) + 1 cooldown = 10 bar
-  assert.equal(bars.length, 10);
-  assert.equal(bars[0].kind, 'warmup');
-  assert.equal(bars[1].kind, 'run');
-  assert.equal(bars[2].kind, 'recover');
-  assert.equal(bars[9].kind, 'cooldown');
-
+  assert.equal(formatDuration('distance', 400), '400 m');
+  assert.equal(formatDuration('distance', 8000), '8.0 km');
+  assert.equal(formatDuration('open'), 'Tombol Lap');
   assert.equal(
-    formatStepDuration({ durationType: 'distance', durationValue: 400 }),
-    '400 m',
-  );
-  assert.equal(
-    formatStepDuration({ durationType: 'distance', durationValue: 1600 }),
-    '1.6 km',
-  );
-  assert.equal(
-    formatStepDuration({ durationType: 'open' }),
-    'Lap Button',
-  );
-  assert.equal(
-    formatStepTarget(
+    formatTarget(
       {
         id: 'x',
+        type: 'step',
         kind: 'run',
         durationType: 'time',
         durationValue: 240,
         targetType: 'hr_zone',
-        hrZone: 4,
+        hrZone: 2,
       },
-      185,
-      55,
+      195,
+      58,
     ),
-    'Zona 4 · 159–172 bpm',
+    'Zona 2 · 140–154 bpm',
   );
+
+  // Tolerant normalization when legacy step omits `type`
+  const normLegacy = normalizeStructuredSteps([
+    { id: 's1', kind: 'run', durationType: 'distance', durationValue: 8000, targetType: 'hr_zone', hrZone: 2 },
+  ]);
+  assert.ok(normLegacy && normLegacy[0].type === 'step');
 
   const saved = addCustomSession(DEFAULT_SCHEDULE_STATE, {
     date: '2026-11-26',
@@ -690,9 +678,9 @@ test('WorkoutStepBuilder: Norwegian 4x4 menghitung total durasi, jarak, HR utama
     name: 'Norwegian 4×4',
     distanceKm: summary.distanceKm,
     durationMin: summary.durationMin,
-    hr: summary.hr,
+    hr: summary.hrRange,
     steps: summary.steps,
-    structuredSteps: summary.structuredSteps,
+    structuredSteps: norwegian.blocks,
   });
 
   const normalized = normalizeScheduleState(saved);
@@ -705,6 +693,7 @@ test('WorkoutStepBuilder: Norwegian 4x4 menghitung total durasi, jarak, HR utama
     normalized!.customSessions![0].structuredSteps,
   );
 });
+
 
 
 

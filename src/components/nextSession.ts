@@ -9,6 +9,7 @@ import {
 } from '../plans/schedule.ts';
 import type { PlanSession } from '../plans/schedule.ts';
 import { loadScheduleState } from '../plans/scheduleStore.ts';
+import { loadK5 } from '../plans/k5Store.ts';
 import { parseDuration } from '../parsers/manual.ts';
 import { fmtHms, todayStr } from './format.ts';
 
@@ -51,8 +52,7 @@ export function nextSession(profile: UserProfile, workouts: Workout[], now: numb
   const vd = currentVdot(workouts, now);
   const easyVdot = vd != null ? 60000 / velocityFor(vd, ZONE_FRACTION.easy) : 360;
 
-  let saved: string | null = null;
-  try { saved = localStorage.getItem('pacelab.k5'); } catch { /* penyimpanan tidak tersedia */ }
+  const saved = loadK5();
   const k5 = parseDuration(saved ?? (preds['5K'] ? fmtHms(preds['5K'].finalSec) : ''));
   const row = k5 != null ? nearestRow(k5) : null;
   const easyPace = paceSecPerKm('rec', row) ?? easyVdot;

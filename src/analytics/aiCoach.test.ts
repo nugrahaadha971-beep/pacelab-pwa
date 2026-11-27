@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AiCoachError,
+  buildAiCoachCacheHash,
   buildAiCoachPrompt,
   buildAiCoachSummary,
   clearGeminiApiKey,
@@ -478,4 +479,58 @@ test('buildProgramEvaluationPrompt, parseProgramEvaluationResponse, dan evaluate
     (err: unknown) => err instanceof AiCoachError && err.code === 'invalid_json',
   );
 });
+
+test('buildAiTrainingPlanPrompt menyertakan kondisi pelari dan rentang minggu aktif bila diberikan', async () => {
+  const { buildAiTrainingPlanPrompt } = await import('./aiCoach.ts');
+  const now = Date.UTC(2026, 10, 23, 8, 0, 0);
+  const prompt = buildAiTrainingPlanPrompt({
+    profile: {
+      age: 30,
+      restingHr: 58,
+      maxHr: 195,
+      targetDistance: '5K',
+      targetRaceDate: Date.UTC(2027, 0, 31),
+      targetTimeSec: 1500,
+    },
+    trainingDays: [2, 4, 6, 0],
+    condition: 'night_shift',
+    weekStartIso: '2026-11-23',
+    weekEndIso: '2026-11-29',
+    acwr: { acute: 100, chronicWeekly: 100, ratio: 1.0, status: 'sweet_spot' },
+    efTrend: { recent: 1.4, prior: 1.38, changePct: 1.4, improving: false },
+    latestDriftPct: 3.5,
+    weeklyVolumeKm: 20,
+    latestAvgPaceSec: 390,
+    workouts: [],
+    todayIso: '2026-11-23',
+    now,
+  });
+
+  assert.match(prompt, /2026-11-23 s\.d\. 2026-11-29/);
+  assert.match(prompt, /Habis Shift Malam/);
+});
+
+test('buildAiCoachCacheHash berubah bila RPE, jenis sesi, profil, atau judul program berubah', () => {
+  const ctx = baseContext();
+  const h0 = buildAiCoachCacheHash(ctx);
+
+  const hRpe = buildAiCoachCacheHash({
+    ...ctx,
+    workouts: ctx.workouts.map((w, i) => (i === 0 ? { ...w, rpe: 9 } : w)),
+  });
+  assert.notEqual(h0, hRpe);
+
+  const hTarget = buildAiCoachCacheHash({
+    ...ctx,
+    profile: { ...ctx.profile, targetDistance: '21.1K' },
+  });
+  assert.notEqual(h0, hTarget);
+
+  const hProg = buildAiCoachCacheHash({
+    ...ctx,
+    programTitle: 'Latihan 10K Baru',
+  });
+  assert.notEqual(h0, hProg);
+});
+
 

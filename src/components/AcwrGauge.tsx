@@ -1,4 +1,4 @@
-import type { AcwrStatus } from '../analytics/workload';
+import { ACWR_MIN_HISTORY_DAYS, type AcwrStatus } from '../analytics/workload';
 
 const MAX = 2.0;
 const CX = 130;
@@ -54,7 +54,15 @@ const TICKS: ReadonlyArray<{ value: number; label: string }> = [
   { value: 2.0, label: '2.0' },
 ];
 
-export default function AcwrGauge({ ratio, status }: { ratio: number | null; status: AcwrStatus }) {
+export default function AcwrGauge({
+  ratio,
+  status,
+  historyDays,
+}: {
+  ratio: number | null;
+  status: AcwrStatus;
+  historyDays?: number;
+}) {
   const visual = resolveZoneVisual(ratio, status);
   const clampedRatio = ratio != null ? Math.min(MAX, Math.max(0, ratio)) : null;
 
@@ -132,6 +140,12 @@ export default function AcwrGauge({ ratio, status }: { ratio: number | null; sta
           {ratio == null ? '–' : ratio.toFixed(2)}
         </div>
         <div className={`mt-1 text-xs font-bold ${visual.badgeText}`}>{visual.label}</div>
+        {status === 'unknown' && historyDays != null && (
+          <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-zinc-400">
+            Mengumpulkan data beban latihan ({Math.min(historyDays, ACWR_MIN_HISTORY_DAYS)}/{ACWR_MIN_HISTORY_DAYS} hari).
+            ACWR muncul setelah {ACWR_MIN_HISTORY_DAYS} hari riwayat.
+          </p>
+        )}
       </div>
 
       <div className="mt-4 grid w-full grid-cols-4 gap-1.5 text-center text-[10px]">

@@ -2,26 +2,21 @@ import { useEffect, useState } from 'react';
 import {
   Check,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardCheck,
   Pencil,
   Plus,
   RotateCcw,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
 } from 'lucide-react';
 import type { UserProfile, Workout } from '../analytics/types';
 import { acwr, cardiacDrift, efTrend } from '../analytics/workload';
 import {
-  evaluateProgramResultsWithAi,
+  AI_WEEK_CONDITION_LABEL,
   generateAiTrainingPlan,
   loadGeminiApiKey,
-} from '../analytics/aiCoach';
-import type {
-  AiTrainingPlanResult,
-  ProgramEvaluationResult,
-  ProgramSessionSnapshot,
+  type AiTrainingPlanResult,
+  type AiWeekCondition,
 } from '../analytics/aiCoach';
 import { stripMarkdown } from '../analytics/raceDayAnalyzer';
 import { PENALTY_RULES, RACE_KM } from '../analytics/predictor';
@@ -33,7 +28,7 @@ import {
   intervalPaceRange,
   weekPace,
 } from '../plans/adaptiveEngine';
-import { formatHrWithZone, resolveMaxHr, speedHrSegments, ZONE_LABEL } from '../plans/hrZones';
+import { formatHrWithZone, resolveMaxHr, speedHrSegments, ZONE_LABEL, zoneRestingHr } from '../plans/hrZones';
 import { fmtKm, fmtPace, fmtRangeKm, nearestRow, paceSecPerKm } from '../plans/pace';
 import {
   addDays,
@@ -58,33 +53,26 @@ import {
   toggleDone,
   WEEKDAY_SHORT,
 } from '../plans/schedule';
-import type { Phase, PlanSession, ScheduleState } from '../plans/schedule';
+import type { IsoDate, PlanSession, ScheduleState } from '../plans/schedule';
+import { kindToCategory } from '../plans/workoutTypes';
+import { loadK5, saveK5 } from '../plans/k5Store';
 import { parseDuration } from '../parsers/manual';
 import { fmtHms, todayStr } from './format';
 import AiLoader from './AiLoader';
 import Sheet from './Sheet';
-import { StructuredStepsView } from './WorkoutStepBuilder';
+import WeekStrip from './WeekStrip';
+import { StructuredWorkoutPreview } from './WorkoutBuilderModal';
 import { KIND_BORDER, KIND_LABEL } from './sessionMeta';
 import { Button, Field } from './ui';
 
-const PHASE_LABEL: Record<Phase, string> = {
-  base: 'Base Building',
-  build: 'Build',
-  taper: 'Taper',
-  race: 'Lomba',
-};
-const STORE_KEY = 'pacelab.k5';
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const CONDITION_OPTIONS: ReadonlyArray<{ value: AiWeekCondition; label: string }> = [
+  { value: 'normal', label: 'Normal' },
+  { value: 'night_shift', label: 'Habis Shift Malam' },
+  { value: 'hot_humid', label: 'Cuaca Panas/Lembap' },
+];
 const control =
   'mt-1 block min-h-[44px] w-full rounded-2xl border border-white/10 bg-[#121215] px-3 py-2 text-sm tabular-nums text-zinc-100 focus:border-[#BEF264] focus:outline-none focus:ring-2 focus:ring-[#BEF264]/35';
-
-function loadSaved(): string | null {
-  try {
-    return localStorage.getItem(STORE_KEY);
-  } catch {
-    return null;
-  }
-}
 
 const fmtRangeMinMax = ([fast, slow]: [number, number]) =>
   `${fmtPace(fast)}–${fmtPace(slow)} /km`;
@@ -97,9 +85,13 @@ interface Props {
   startWeeklyKm: number;
   easyPaceSecPerKm: number;
   scheduleState: ScheduleState;
+  weekStartIso: IsoDate;
+  selectedDate: IsoDate | null;
+  onShiftWeek: (delta: -1 | 1) => void;
+  onSelectDate: (iso: IsoDate | null) => void;
   onScheduleChange: (next: ScheduleState) => void;
-  onAddCustomSession?: () => void;
-  onEditCustomSession?: (session: PlanSession) => void;
+  onAddCustomSession: () => void;
+  onEditCustomSession: (session: PlanSession) => void;
 }
 
 interface SettingsProps {
@@ -225,30 +217,30 @@ export default function TrainingPlan({
   startWeeklyKm,
   easyPaceSecPerKm,
   scheduleState: st,
+  weekStartIso,
+  selectedDate,
+  onShiftWeek,
+  onSelectDate,
   onScheduleChange: update,
   onAddCustomSession,
   onEditCustomSession,
 }: Props) {
-  const [weekIdx, setWeekIdx] = useState(0);
   const [settings, setSettings] = useState(false);
   const [k5Text, setK5Text] = useState(
-    () => loadSaved() ?? (defaultK5Sec != null ? fmtHms(defaultK5Sec) : ''),
+    () => loadK5() ?? (defaultK5Sec != null ? fmtHms(defaultK5Sec) : ''),
   );
   const [fromPrediction, setFromPrediction] = useState(
-    () => loadSaved() == null && defaultK5Sec != null,
+    () => loadK5() == null && defaultK5Sec != null,
   );
   const [hasApiKey, setHasApiKey] = useState(() => Boolean(loadGeminiApiKey()));
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   );
 
+  const [aiCondition, setAiCondition] = useState<AiWeekCondition>('normal');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiPreview, setAiPreview] = useState<AiTrainingPlanResult | null>(null);
-
-  const [evalLoading, setEvalLoading] = useState(false);
-  const [evalError, setEvalError] = useState<string | null>(null);
-  const [evalResult, setEvalResult] = useState<ProgramEvaluationResult | null>(null);
 
   const k5 = parseDuration(k5Text);
   const row = k5 != null ? nearestRow(k5) : null;
@@ -271,67 +263,26 @@ export default function TrainingPlan({
   const onK5 = (v: string) => {
     setK5Text(v);
     setFromPrediction(false);
-    try {
-      localStorage.setItem(STORE_KEY, v);
-    } catch {
-      /* ignore */
-    }
+    saveK5(v);
   };
 
   const todayIso = todayStr();
   const raceIso = profile.targetRaceDate ? isoFromRaceTs(profile.targetRaceDate) : null;
   const targetPace = profile.targetTimeSec / RACE_KM[profile.targetDistance];
   const maxHr = resolveMaxHr(profile, workouts);
+  const effectiveMaxHr = maxHr ?? 195;
+  const restingHr = zoneRestingHr(profile);
   const maxWeeklyKm =
     profile.weeklyTargetKm ?? PENALTY_RULES[profile.targetDistance]?.weeklyKm ?? 50;
   const customIds = new Set((st.customSessions ?? []).map((c) => c.id));
   const easyPace = paceSecPerKm('rec', row) ?? easyPaceSecPerKm;
   const workoutDays = new Set(workouts.map((w) => isoFromLocal(w.date)));
 
-  const settingsSheet = (missed: number) =>
-    settings && (
-      <SettingsSheet
-        st={st}
-        update={update}
-        k5Text={k5Text}
-        onK5={onK5}
-        k5={k5}
-        paceChartRow={row}
-        fromPrediction={fromPrediction}
-        missed={missed}
-        onClose={() => setSettings(false)}
-      />
-    );
-
-  // Bangun daftar sesi (berbasis tanggal lomba bila ada, atau sesi kustom/AI mandiri bila belum ada tanggal lomba)
   const standaloneSessions: PlanSession[] = !raceIso
     ? [...(st.aiSessions ?? []), ...(st.customSessions ?? [])]
         .map((item) => ({ ...item, date: st.overrides[item.id] ?? item.date }))
         .sort((a, b) => dayNum(a.date) - dayNum(b.date))
     : [];
-
-  if (!raceIso && standaloneSessions.length === 0) {
-    return (
-      <div className="space-y-4">
-        <div className="sport-card border-dashed border-white/15 p-5 text-center">
-          <p className="text-sm text-zinc-300">
-            Atur tanggal lomba di atas untuk membuat jadwal kalender dasar, atau input sesi program Anda secara mandiri.
-          </p>
-          {onAddCustomSession && (
-            <button
-              type="button"
-              onClick={onAddCustomSession}
-              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-2xl bg-[#BEF264] px-4 text-xs font-extrabold text-[#09090B] transition hover:bg-[#d4fc82]"
-            >
-              <Plus size={15} strokeWidth={2.5} aria-hidden />
-              <span>Input Sesi Program</span>
-            </button>
-          )}
-        </div>
-        {settingsSheet(0)}
-      </div>
-    );
-  }
 
   const basePlan = raceIso
     ? buildPlan({
@@ -365,18 +316,20 @@ export default function TrainingPlan({
 
   const missed = flat.filter((s) => dayNum(s.date) < dayNum(todayIso) && !done.has(s.id)).length;
   const totalWeeks = plan ? plan.totalWeeks : 1;
-  const wi = plan ? Math.min(weekIdx, Math.max(0, plan.weeks.length - 1)) : 0;
-  const week = plan ? plan.weeks[wi] : null;
 
-  if (raceIso && !week) {
-    return (
-      <div className="sport-card p-4 text-sm text-zinc-300">
-        Tanggal lomba sudah lewat. Klik Ubah Target di atas untuk memperbarui jadwal.
-      </div>
-    );
-  }
+  const weekEndIso = addDays(weekStartIso, 6);
+  const weekDots = flat.map((s) => ({
+    id: s.id,
+    date: s.date,
+    category: kindToCategory(s.kind),
+  }));
 
-  const visibleRawSessions = week ? week.sessions : standaloneSessions;
+  const weekRawSessions = flat.filter(
+    (s) => dayNum(s.date) >= dayNum(weekStartIso) && dayNum(s.date) <= dayNum(weekEndIso),
+  );
+  const visibleRawSessions = selectedDate
+    ? weekRawSessions.filter((s) => s.date === selectedDate)
+    : weekRawSessions;
 
   const goalPaceFor = (s: PlanSession): number | null =>
     s.kind === 'race'
@@ -385,12 +338,9 @@ export default function TrainingPlan({
         ? null
         : weekPace(projPace, targetPace, s.weekNo, totalWeeks);
 
-  const weekLabel = (w: NonNullable<typeof week>) =>
-    `Minggu ${w.weekNo}/${totalWeeks} · ${formatDayMonth(dayNum(w.startIso) < dayNum(todayIso) ? todayIso : w.startIso)}–${formatDayMonth(w.endIso)} · ${w.title ?? PHASE_LABEL[w.phase]}`;
-
   const loadOf = (s: PlanSession): { min: number | null; km: number | null } => {
     const rawMin = s.adjDurationMin ?? s.durationMin;
-    if (s.kind === 'speed' || s.kind === 'race') return { min: rawMin, km: null };
+    if (s.kind === 'speed' || s.kind === 'race') return { min: rawMin, km: s.distanceKm ?? null };
     const min =
       rawMin ?? (s.distanceKm != null ? Math.round((s.distanceKm * easyPace) / 60) : null);
     if (min == null) return { min: null, km: s.distanceKm ?? null };
@@ -401,15 +351,13 @@ export default function TrainingPlan({
     return { min, km };
   };
 
-  const weekKm = visibleRawSessions.reduce(
-    (sum, r) => sum + (loadOf(byId.get(r.id) as PlanSession).km ?? 0),
+  const weekKm = weekRawSessions.reduce(
+    (sum, r) => sum + (loadOf((byId.get(r.id) ?? r) as PlanSession).km ?? 0),
     0,
   );
 
   const canGenerateAi = hasApiKey && isOnline && !aiLoading;
   const hasAiActive = Boolean(st.aiSessions && st.aiSessions.length > 0);
-  const evaluationTargets = adapted.sessions.filter((s) => s.kind !== 'race');
-  const canEvaluateProgram = hasApiKey && isOnline && !evalLoading && evaluationTargets.length > 0;
 
   const handleGenerateAiPlan = async () => {
     const key = loadGeminiApiKey();
@@ -432,6 +380,9 @@ export default function TrainingPlan({
           profile,
           programTitle: st.programTitle,
           trainingDays: st.days,
+          condition: aiCondition,
+          weekStartIso,
+          weekEndIso,
           acwr: acwr(workouts, profile, now),
           efTrend: efTrend(workouts, now),
           latestDriftPct: latestW ? cardiacDrift(latestW.laps) : null,
@@ -445,7 +396,7 @@ export default function TrainingPlan({
       );
       setAiPreview(result);
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'Gagal menyusun jadwal latihan AI.');
+      setAiError(err instanceof Error ? err.message : 'Gagal menyusun jadwal minggu AI.');
     } finally {
       setAiLoading(false);
     }
@@ -468,95 +419,114 @@ export default function TrainingPlan({
     setAiError(null);
   };
 
-  const handleEvaluateProgram = async () => {
-    const key = loadGeminiApiKey();
-    setHasApiKey(Boolean(key));
-    setEvalLoading(true);
-    setEvalError(null);
-    try {
-      const now = Date.now();
-      const plannedSessions: ProgramSessionSnapshot[] = evaluationTargets.map((s) => ({
-        date: s.date,
-        kind: s.kind,
-        name: s.name,
-        status: done.has(s.id)
-          ? 'done'
-          : dayNum(s.date) < dayNum(todayIso)
-            ? 'missed'
-            : 'upcoming',
-        targetDistanceKm: s.distanceKm,
-        targetDurationMin: s.adjDurationMin ?? s.durationMin,
-        targetHr: s.hr ?? null,
-      }));
-      const result = await evaluateProgramResultsWithAi(
-        {
-          profile,
-          programTitle: st.programTitle,
-          plannedSessions,
-          workouts,
-          todayIso,
-          now,
-        },
-        { apiKey: key, isOnline: navigator.onLine },
-      );
-      setEvalResult(result);
-    } catch (err) {
-      setEvalError(
-        err instanceof Error ? err.message : 'Gagal mengevaluasi hasil program dengan AI.',
-      );
-    } finally {
-      setEvalLoading(false);
-    }
-  };
-
-  const scoreTone =
-    evalResult == null
-      ? 'text-white'
-      : evalResult.complianceScore >= 75
-        ? 'text-[#BEF264]'
-        : evalResult.complianceScore >= 50
-          ? 'text-amber-400'
-          : 'text-rose-400';
-
   return (
     <div className="space-y-4">
-      {/* Toolbar Jadwal Ringkas */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" block={false} onClick={() => setSettings(true)} aria-haspopup="dialog">
-            Atur jadwal
-          </Button>
-          <Button
-            variant="secondary"
-            block={false}
-            onClick={handleGenerateAiPlan}
-            disabled={!canGenerateAi}
-            className="gap-1.5 border-[#BEF264]/35 bg-[#BEF264]/10 text-[#BEF264] hover:bg-[#BEF264]/15"
-          >
-            <Sparkles className="h-4 w-4 text-[#BEF264]" aria-hidden />
-            <span className="whitespace-nowrap">{aiLoading ? 'Menyusun…' : 'Susun AI'}</span>
-          </Button>
-          {hasAiActive && (
-            <Button variant="secondary" block={false} onClick={handleRestoreStandard} className="gap-1.5 text-xs">
-              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-              <span>Hapus AI</span>
-            </Button>
-          )}
+      {/* Kalender Mingguan Horizontal (Sen–Min) */}
+      <WeekStrip
+        weekStartIso={weekStartIso}
+        weekEndIso={
+          raceIso && dayNum(raceIso) >= dayNum(weekStartIso) && dayNum(raceIso) < dayNum(weekEndIso)
+            ? raceIso
+            : undefined
+        }
+        todayIso={todayIso}
+        selectedDate={selectedDate}
+        sessions={weekDots}
+        onSelectDate={onSelectDate}
+        onShiftWeek={onShiftWeek}
+      />
+
+      {/* Aksi Mingguan: Kondisi + Isi Minggu AI + Tambah Sesi */}
+      <section
+        aria-label="Aksi Jadwal Mingguan"
+        className="rounded-2xl border border-white/10 bg-[#121215] p-3.5 space-y-3"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Kondisi pelari untuk Isi Minggu AI">
+            {CONDITION_OPTIONS.map((opt) => {
+              const active = aiCondition === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setAiCondition(opt.value)}
+                  className={`min-h-[36px] whitespace-nowrap rounded-xl border px-2.5 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                    active
+                      ? 'border-[#BEF264]/60 bg-[#BEF264]/15 text-[#BEF264]'
+                      : 'border-white/10 bg-[#18181D] text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {weekKm > 0 && (
+              <span className="font-mono text-xs font-bold tabular-nums text-sky-400">
+                {weekKm.toFixed(1)} km
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setSettings(true)}
+              aria-haspopup="dialog"
+              aria-label="Atur hari latihan"
+              className="inline-flex min-h-[40px] items-center gap-1 rounded-xl border border-white/10 bg-[#18181D] px-2.5 text-xs font-semibold text-zinc-300 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+            >
+              <SlidersHorizontal size={13} aria-hidden />
+              <span>Atur Hari</span>
+            </button>
+          </div>
         </div>
 
-        {(weekKm > 0 || week?.plannedKm != null) && (
-          <span className="inline-flex min-h-[44px] items-center rounded-2xl border border-sky-400/25 bg-sky-400/10 px-3.5 text-xs font-bold text-sky-400">
-            Volume:{' '}
-            <span className="ml-1 font-mono tabular-nums">
-              {(weekKm > 0 ? weekKm : week?.plannedKm ?? 0).toFixed(1)} km
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={handleGenerateAiPlan}
+            disabled={!canGenerateAi}
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-2xl border border-[#BEF264]/35 bg-[#BEF264]/10 px-4 text-xs font-bold text-[#BEF264] transition hover:bg-[#BEF264]/15 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+          >
+            <Sparkles size={15} aria-hidden />
+            <span>
+              {aiLoading
+                ? 'Menyusun Minggu AI…'
+                : `Isi Minggu AI (${AI_WEEK_CONDITION_LABEL[aiCondition]})`}
             </span>
-          </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onAddCustomSession}
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-2xl bg-[#BEF264] px-4 text-xs font-extrabold text-[#09090B] transition hover:bg-[#d4fc82] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+          >
+            <Plus size={15} strokeWidth={2.5} aria-hidden />
+            <span>Tambah Sesi</span>
+          </button>
+        </div>
+
+        {hasAiActive && (
+          <div className="flex items-center justify-between border-t border-white/[0.08] pt-2 text-xs">
+            <span className="truncate text-zinc-400">
+              {st.aiSummary ? stripMarkdown(st.aiSummary) : 'Jadwal AI aktif diterapkan.'}
+            </span>
+            <button
+              type="button"
+              onClick={handleRestoreStandard}
+              className="ml-2 inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-xl border border-white/10 bg-[#18181D] px-2.5 text-xs font-semibold text-zinc-300 hover:text-white"
+            >
+              <RotateCcw size={12} aria-hidden />
+              <span>Hapus AI</span>
+            </button>
+          </div>
         )}
-      </div>
+      </section>
 
       {!hasApiKey && (
         <p className="text-xs text-zinc-400">
-          Tambahkan Gemini API Key di Profil untuk mengaktifkan Susun AI dan Evaluasi AI.
+          Tambahkan Gemini API Key di Profil untuk mengaktifkan Isi Minggu AI.
         </p>
       )}
       {aiLoading && <AiLoader />}
@@ -566,57 +536,23 @@ export default function TrainingPlan({
         </p>
       )}
 
-      {/* Pemilih Minggu */}
-      {plan && week && (
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setWeekIdx(wi - 1)}
-            disabled={wi <= 0}
-            aria-label="Minggu sebelumnya"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-[#121215] text-zinc-200 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-          >
-            <ChevronLeft size={20} aria-hidden />
-          </button>
-          <select
-            value={wi}
-            onChange={(e) => setWeekIdx(Number(e.target.value))}
-            aria-label="Pilih minggu"
-            className="min-h-[44px] min-w-0 flex-1 rounded-2xl border border-white/10 bg-[#121215] px-3 text-sm text-zinc-100 focus:border-[#BEF264] focus:outline-none focus:ring-2 focus:ring-[#BEF264]/35"
-          >
-            {plan.weeks.map((w, i) => (
-              <option key={w.weekNo} value={i}>
-                {weekLabel(w)}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => setWeekIdx(wi + 1)}
-            disabled={wi >= plan.weeks.length - 1}
-            aria-label="Minggu berikutnya"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-[#121215] text-zinc-200 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-          >
-            <ChevronRight size={20} aria-hidden />
-          </button>
-        </div>
-      )}
-
-      {/* Daftar Sesi Minggu Ini */}
-      <section className="space-y-3" aria-label="Sesi minggu ini">
+      {/* Daftar Sesi Minggu / Tanggal Terpilih */}
+      <section className="space-y-3" aria-label="Daftar Sesi Jadwal">
         {visibleRawSessions.length === 0 ? (
           <div className="sport-card border-dashed border-white/15 p-5 text-center">
-            <p className="text-sm text-zinc-300">Belum ada sesi latihan pada minggu ini.</p>
-            {onAddCustomSession && (
-              <button
-                type="button"
-                onClick={onAddCustomSession}
-                className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-2xl border border-[#BEF264]/35 bg-[#BEF264]/10 px-4 text-xs font-bold text-[#BEF264] transition hover:bg-[#BEF264]/15"
-              >
-                <Plus size={14} aria-hidden />
-                <span>Tambah Sesi Kustom</span>
-              </button>
-            )}
+            <p className="text-sm text-zinc-300">
+              {selectedDate
+                ? `Tidak ada sesi latihan pada ${formatDateId(selectedDate)}.`
+                : 'Belum ada sesi latihan pada minggu ini.'}
+            </p>
+            <button
+              type="button"
+              onClick={onAddCustomSession}
+              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-2xl border border-[#BEF264]/35 bg-[#BEF264]/10 px-4 text-xs font-bold text-[#BEF264] transition hover:bg-[#BEF264]/15"
+            >
+              <Plus size={14} aria-hidden />
+              <span>Tambah Sesi</span>
+            </button>
           </div>
         ) : (
           visibleRawSessions.map((raw) => {
@@ -646,7 +582,7 @@ export default function TrainingPlan({
                 : null;
             const { min, km } = loadOf(s);
             const showName = s.name && s.kind !== 'race' && !['Easy Run', 'Long Run'].includes(s.name);
-            const swapChoices = visibleRawSessions
+            const swapChoices = weekRawSessions
               .filter((o) => o.id !== s.id && o.kind !== 'race' && !done.has(o.id))
               .map((o) => (byId.get(o.id) ?? o) as PlanSession);
             const rawTitle = s.convertedFrom
@@ -676,7 +612,7 @@ export default function TrainingPlan({
                 : `${fmtPace(s.pace[0])}–${fmtPace(s.pace[1])} /km`
               : null;
 
-            const formattedHr = formatHrWithZone(s.hr, s.zone, maxHr, profile.restingHr);
+            const formattedHr = formatHrWithZone(s.hr, s.zone, maxHr, restingHr);
 
             const targetPaceOrHr = formattedHr
               ? formattedHr
@@ -696,13 +632,18 @@ export default function TrainingPlan({
                 className={`sport-card border-l-[3px] p-4 ${KIND_BORDER[s.kind]} ${isDone ? 'opacity-75' : ''}`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs font-semibold tabular-nums text-zinc-400">
                       {formatDateId(s.date)}
                     </span>
                     {isCustom && (
                       <span className="rounded-md bg-sky-400/10 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">
                         Mandiri
+                      </span>
+                    )}
+                    {formattedHr && (
+                      <span className="rounded-md border border-[#BEF264]/25 bg-[#BEF264]/10 px-2 py-0.5 font-mono text-[10px] font-bold tabular-nums text-[#BEF264]">
+                        {formattedHr}
                       </span>
                     )}
                   </div>
@@ -753,19 +694,28 @@ export default function TrainingPlan({
                   </div>
                 </dl>
 
+                {/* Rincian Blok Terstruktur (Repeat Nx & Langkah Garmin) */}
+                {s.structuredSteps && s.structuredSteps.length > 0 && (
+                  <div className="mt-3">
+                    <StructuredWorkoutPreview
+                      blocks={s.structuredSteps}
+                      maxHr={effectiveMaxHr}
+                      restingHr={restingHr}
+                    />
+                  </div>
+                )}
+
                 {isCustom && (
                   <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">
-                    {onEditCustomSession && (
-                      <button
-                        type="button"
-                        onClick={() => onEditCustomSession(s)}
-                        aria-label={`Edit sesi ${sessionTitle}`}
-                        className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-white/10 bg-[#18181D] px-3 text-xs font-semibold text-zinc-200 transition hover:border-white/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-                      >
-                        <Pencil size={13} aria-hidden />
-                        <span>Edit</span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => onEditCustomSession(s)}
+                      aria-label={`Edit sesi ${sessionTitle}`}
+                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-white/10 bg-[#18181D] px-3 text-xs font-semibold text-zinc-200 transition hover:border-white/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+                    >
+                      <Pencil size={13} aria-hidden />
+                      <span>Edit</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => update(deleteCustomSession(st, s.id))}
@@ -797,49 +747,38 @@ export default function TrainingPlan({
                       </div>
                     )}
 
-                    {s.structuredSteps && s.structuredSteps.length > 0 ? (
-                      <StructuredStepsView
-                        blocks={s.structuredSteps}
-                        maxHr={maxHr}
-                        restingHr={profile.restingHr}
-                        referencePaceSecPerKm={easyPace}
-                      />
-                    ) : (
-                      <>
-                        {s.kind === 'speed' && (
-                          <div className="rounded-xl border border-white/[0.07] bg-[#121215] p-3">
-                            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
-                              Target HR per Segmen
+                    {!s.structuredSteps?.length && s.kind === 'speed' && (
+                      <div className="rounded-xl border border-white/[0.07] bg-[#121215] p-3">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                          Target HR per Segmen
+                        </div>
+                        <dl className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                          {speedHrSegments({
+                            sessionHr: s.hr,
+                            maxHr,
+                            restingHr,
+                          }).map((seg) => (
+                            <div
+                              key={seg.id}
+                              className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.05] bg-[#18181D]/70 px-2.5 py-1.5"
+                            >
+                              <dt className="text-zinc-300">{seg.label}</dt>
+                              <dd className="font-mono text-[11px] font-bold tabular-nums text-[#BEF264]">
+                                {seg.zoneCode}
+                                {seg.bpmText ? ` ${seg.bpmText}` : ''}
+                              </dd>
                             </div>
-                            <dl className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                              {speedHrSegments({
-                                sessionHr: s.hr,
-                                maxHr,
-                                restingHr: profile.restingHr,
-                              }).map((seg) => (
-                                <div
-                                  key={seg.id}
-                                  className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.05] bg-[#18181D]/70 px-2.5 py-1.5"
-                                >
-                                  <dt className="text-zinc-300">{seg.label}</dt>
-                                  <dd className="font-mono text-[11px] font-bold tabular-nums text-[#BEF264]">
-                                    {seg.zoneCode}
-                                    {seg.bpmText ? ` ${seg.bpmText}` : ''}
-                                  </dd>
-                                </div>
-                              ))}
-                            </dl>
-                          </div>
-                        )}
+                          ))}
+                        </dl>
+                      </div>
+                    )}
 
-                        {s.steps.length > 0 && (
-                          <div className="space-y-1">
-                            {s.steps.map((stp, j) => (
-                              <div key={j}>{stripMarkdown(stp)}</div>
-                            ))}
-                          </div>
-                        )}
-                      </>
+                    {s.steps.length > 0 && !s.structuredSteps?.length && (
+                      <div className="space-y-1">
+                        {s.steps.map((stp, j) => (
+                          <div key={j}>{stripMarkdown(stp)}</div>
+                        ))}
+                      </div>
                     )}
 
                     {s.note && (
@@ -890,99 +829,19 @@ export default function TrainingPlan({
         )}
       </section>
 
-      {/* Kartu Analisis AI Hasil Program */}
-      <section aria-label="Analisis AI Hasil Program" className="sport-card p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <ClipboardCheck size={16} className="text-[#BEF264]" aria-hidden />
-              <h3 className="font-display text-base font-bold text-white">
-                Analisis AI Hasil Program
-              </h3>
-            </div>
-            <p className="mt-0.5 text-xs text-zinc-400">
-              Bandingkan kepatuhan jadwal, HR, dan realisasi latihan Anda.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleEvaluateProgram}
-            disabled={!canEvaluateProgram}
-            className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-2xl border border-[#BEF264]/35 bg-[#BEF264]/10 px-4 text-xs font-bold text-[#BEF264] transition hover:bg-[#BEF264]/15 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-          >
-            <Sparkles size={14} aria-hidden />
-            <span>{evalLoading ? 'Menganalisis…' : 'Evaluasi Hasil Latihan dengan AI'}</span>
-          </button>
-        </div>
-
-        {evaluationTargets.length === 0 && (
-          <p className="mt-2.5 text-xs text-zinc-400">
-            Tambahkan minimal 1 sesi latihan di jadwal untuk dievaluasi.
-          </p>
-        )}
-
-        {evalLoading && (
-          <div className="mt-3">
-            <AiLoader />
-          </div>
-        )}
-
-        {evalError && (
-          <p
-            role="alert"
-            className="mt-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-400"
-          >
-            {evalError}
-          </p>
-        )}
-
-        {evalResult && !evalLoading && (
-          <div className="mt-4 space-y-3 border-t border-white/[0.08] pt-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/[0.08] bg-[#18181D] px-3.5 py-3">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                  Skor Kepatuhan Program
-                </div>
-                <p className="mt-0.5 text-xs leading-relaxed text-zinc-200">
-                  {stripMarkdown(evalResult.summary)}
-                </p>
-              </div>
-              <div className={`font-mono text-2xl font-extrabold tabular-nums ${scoreTone}`}>
-                {evalResult.complianceScore}%
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="sport-subcard p-3">
-                <div className="text-xs font-bold text-white">Poin Evaluasi</div>
-                <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-zinc-300">
-                  {evalResult.analysisPoints.map((pt, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" aria-hidden />
-                      <span>{stripMarkdown(pt)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="sport-subcard p-3">
-                <div className="text-xs font-bold text-[#BEF264]">Penyesuaian Berikutnya</div>
-                <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-zinc-300">
-                  {evalResult.nextAdjustments.map((adj, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#BEF264]" aria-hidden />
-                      <span>{stripMarkdown(adj)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {settingsSheet(missed)}
+      {settings && (
+        <SettingsSheet
+          st={st}
+          update={update}
+          k5Text={k5Text}
+          onK5={onK5}
+          k5={k5}
+          paceChartRow={row}
+          fromPrediction={fromPrediction}
+          missed={missed}
+          onClose={() => setSettings(false)}
+        />
+      )}
 
       {aiPreview && (
         <Sheet
@@ -1010,7 +869,7 @@ export default function TrainingPlan({
                     {s.durationMin != null && <span>{s.durationMin} mnt</span>}
                     {s.hr && (
                       <span>
-                        {formatHrWithZone(s.hr, s.zone, maxHr, profile.restingHr)}
+                        {formatHrWithZone(s.hr, s.zone, maxHr, restingHr)}
                       </span>
                     )}
                   </div>

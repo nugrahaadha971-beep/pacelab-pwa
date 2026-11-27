@@ -26,7 +26,9 @@ export const GEMINI_MODEL_PRIORITY: readonly string[] = [
 export const DEFAULT_GEMINI_MODEL = GEMINI_MODEL_PRIORITY[0];
 export const FALLBACK_GEMINI_MODEL = GEMINI_MODEL_PRIORITY[1];
 export const GEMINI_ENDPOINT = `${GEMINI_API_BASE}/${DEFAULT_GEMINI_MODEL}:generateContent`;
-export const REQUEST_TIMEOUT_MS = 10_000;
+export const REQUEST_TIMEOUT_MS = 30_000;
+const TOTAL_BUDGET_MS = 75_000;
+const secText = (ms: number) => `${Math.round(ms / 1000)} detik`;
 const ALL_429_MESSAGE =
   'Kuota gratis harian semua model Gemini untuk API key ini sedang habis. Coba lagi dalam beberapa jam atau ganti API key dari project Google Cloud lain di tab Profil.';
 
@@ -393,7 +395,7 @@ async function callGenerateContent(
     if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
       throw new AiCoachError(
         'timeout',
-        'Permintaan ke Gemini melewati batas waktu 10 detik. Silakan coba lagi.',
+        `Permintaan ke Gemini melewati batas waktu ${secText(timeoutMs)}. Silakan coba lagi.`,
       );
     }
     throw new AiCoachError(
@@ -420,7 +422,10 @@ function fnv1aHash(input: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function buildAiCoachCacheHash(ctx: Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'>): string {
+type CacheCtx = Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'> &
+  Partial<Pick<AiCoachContext, 'profile' | 'curriculum' | 'programTitle'>>;
+
+export function buildAiCoachCacheHash(ctx: CacheCtx): string {
   const cutoff = ctx.now;
   const relevant = cutoff == null ? ctx.workouts : ctx.workouts.filter((w) => w.date <= cutoff);
   const latestDate = relevant.reduce((max, w) => (w.date > max ? w.date : max), 0);
@@ -428,10 +433,26 @@ export function buildAiCoachCacheHash(ctx: Pick<AiCoachContext, 'workouts' | 'ac
     ctx.acwr.ratio != null && Number.isFinite(ctx.acwr.ratio)
       ? ctx.acwr.ratio.toFixed(2)
       : ctx.acwr.status;
-  return fnv1aHash(`${relevant.length}|${latestDate}|${acwrVal}`);
+  const sig = relevant
+    .map((w) => `${w.date}:${w.workoutType}:${w.rpe ?? ''}:${w.avgHr ?? ''}:${w.distanceKm.toFixed(2)}:${Math.round(w.durationSec)}`)
+    .join(',');
+  const p = ctx.profile;
+  return fnv1aHash(
+    [
+      relevant.length,
+      latestDate,
+      acwrVal,
+      p?.age,
+      p?.targetDistance,
+      p?.targetRaceDate,
+      ctx.curriculum,
+      ctx.programTitle,
+      sig,
+    ].join('|'),
+  );
 }
 
-export function loadCachedAiCoachAnalysis(ctx: Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'>): string | null {
+export function loadCachedAiCoachAnalysis(ctx: CacheCtx): string | null {
   try {
     const raw = localStorage.getItem(AI_COACH_CACHE_STORAGE_KEY);
     if (!raw) return null;
@@ -451,7 +472,7 @@ export function loadCachedAiCoachAnalysis(ctx: Pick<AiCoachContext, 'workouts' |
 }
 
 export function saveCachedAiCoachAnalysis(
-  ctx: Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'>,
+  ctx: CacheCtx,
   text: string,
 ): void {
   const trimmed = text.trim();
@@ -507,15 +528,21 @@ async function callGeminiText(
   const attemptStatuses: number[] = [];
   let stopEarly = false;
 
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
+
   const tryCandidates = async (models: readonly string[]) => {
     for (const rawModel of models) {
+      if (Date.now() > deadline) return;
       const model = normalizeModelName(rawModel);
       const lower = model.toLowerCase();
       if (!model || triedLower.has(lower)) continue;
       triedLower.add(lower);
 
       try {
-        const attempt = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig, timeoutMs);
+        const remainingBudget = Math.max(1_000, deadline - Date.now());
+        const perCallTimeout = Math.min(timeoutMs, remainingBudget);
+        const attempt = await callGenerateContent(fetchFn, model, apiKey, prompt, generationConfig, perCallTimeout);
+        (res as Response | null)?.body?.cancel().catch(() => undefined);
         res = attempt;
         attemptStatuses.push(attempt.status);
         if (attempt.ok) {
@@ -530,6 +557,7 @@ async function callGeminiText(
       } catch (err) {
         if (err instanceof AiCoachError && err.code === 'timeout') {
           lastTimeoutErr = err;
+          (res as Response | null)?.body?.cancel().catch(() => undefined);
           res = null;
           continue;
         }
@@ -539,8 +567,8 @@ async function callGeminiText(
   };
 
   await tryCandidates(GEMINI_MODEL_PRIORITY);
-  if (!stopEarly) {
-    const activeModels = await fetchActiveModels(fetchFn, apiKey, triedLower, timeoutMs);
+  if (!stopEarly && Date.now() <= deadline) {
+    const activeModels = await fetchActiveModels(fetchFn, apiKey, triedLower, Math.min(timeoutMs, Math.max(1_000, deadline - Date.now())));
     if (activeModels.length > 0) {
       await tryCandidates(activeModels);
     }
@@ -549,7 +577,7 @@ async function callGeminiText(
   if (!res) {
     throw (
       lastTimeoutErr ??
-      new AiCoachError('timeout', 'Permintaan ke Gemini melewati batas waktu 10 detik. Silakan coba lagi.')
+      new AiCoachError('timeout', `Permintaan ke Gemini melewati batas waktu ${secText(timeoutMs)}. Silakan coba lagi.`)
     );
   }
 
@@ -672,11 +700,30 @@ export function parseCoachPoints(raw: string): string[] {
 
 // ───────────────────────── AI Training Plan Generator ─────────────────────────
 
+export type AiWeekCondition = 'normal' | 'night_shift' | 'hot_humid';
+
+export const AI_WEEK_CONDITION_LABEL: Record<AiWeekCondition, string> = {
+  normal: 'Normal',
+  night_shift: 'Habis Shift Malam',
+  hot_humid: 'Cuaca Panas/Lembap',
+};
+
+const AI_WEEK_CONDITION_RULE: Record<AiWeekCondition, string> = {
+  normal: 'Normal: Kondisi fisik standar; jaga keseimbangan Easy/Long/Speed sesuai ACWR.',
+  night_shift:
+    'Habis Shift Malam (kurang tidur/pemulihan parsial): Kurangi volume atau hindari interval berat di awal minggu; prioritaskan lari santai Zona 1–2 atau pemulihan.',
+  hot_humid:
+    'Cuaca Panas/Lembap: Terapkan aturan HR-First secara ketat, turunkan target pace atau perpanjang waktu pemulihan antar ulangan, dan tekankan hidrasi.',
+};
+
 export interface AiTrainingPlanInput {
   profile: Pick<UserProfile, 'age' | 'restingHr' | 'maxHr' | 'targetDistance' | 'targetRaceDate' | 'targetTimeSec'>;
   curriculum?: CurriculumId;
   programTitle?: string;
   trainingDays: number[];
+  condition?: AiWeekCondition;
+  weekStartIso?: IsoDate;
+  weekEndIso?: IsoDate;
   acwr: Acwr;
   efTrend: EfTrend;
   latestDriftPct: number | null;
@@ -756,14 +803,21 @@ export function buildAiTrainingPlanPrompt(input: AiTrainingPlanInput): string {
           .join('\n')
       : 'Belum ada riwayat latihan tercatat.';
 
+  const condition: AiWeekCondition = input.condition ?? 'normal';
+  const hasWeekWindow = Boolean(input.weekStartIso && input.weekEndIso);
+  const horizonLine = hasWeekWindow
+    ? `Anda adalah pelatih lari pribadi berbasis sains olahraga. Susun jadwal latihan terstruktur untuk minggu aktif ${input.weekStartIso} s.d. ${input.weekEndIso} (atau hingga sebelum hari lomba bila lebih dekat) dalam Bahasa Indonesia.`
+    : 'Anda adalah pelatih lari pribadi berbasis sains olahraga. Susun program latihan terstruktur untuk 2–4 minggu ke depan (atau hingga sebelum hari lomba bila lebih dekat) dalam Bahasa Indonesia.';
+
   return [
-    'Anda adalah pelatih lari pribadi berbasis sains olahraga. Susun program latihan terstruktur untuk 2–4 minggu ke depan (atau hingga sebelum hari lomba bila lebih dekat) dalam Bahasa Indonesia.',
+    horizonLine,
     'Kembalikan HANYA JSON valid tanpa teks tambahan di luar JSON, sesuai skema persis berikut:',
     '{ "summary": string, "sessions": [{ "date": "YYYY-MM-DD", "kind": "recovery" | "long" | "speed", "name": string, "distanceKm": number | null, "durationMin": number | null, "hr": [number, number] | null, "steps": string[], "note": string }] }',
     '',
     'Aturan penyusunan:',
-    `- Tanggal hari ini: ${todayIso}. Tanggal sesi harus >= ${todayIso}${raceIso ? ` dan WAJIB lebih awal dari tanggal lomba (${raceIso}) — jangan buat sesi pada atau setelah ${raceIso}` : ''}.`,
+    `- Tanggal hari ini: ${todayIso}. Tanggal sesi harus >= ${todayIso}${hasWeekWindow ? ` dan berada dalam minggu ${input.weekStartIso} s.d. ${input.weekEndIso}` : ''}${raceIso ? ` dan WAJIB lebih awal dari tanggal lomba (${raceIso}) — jangan buat sesi pada atau setelah ${raceIso}` : ''}.`,
     `- Utamakan hari latihan rutin pelari: ${daysText}.`,
+    `- Kondisi pelari saat ini: ${AI_WEEK_CONDITION_RULE[condition]}`,
     `- Sesuaikan beban dan jenis sesi dengan fokus program (${curriculumLabel}), nilai ACWR, tren EF, dan cardiac drift.`,
     '- Gunakan kind "recovery" untuk lari santai/pemulihan, "long" untuk lari terjauh mingguan, dan "speed" untuk interval/tempo/tes.',
     '- Untuk recovery/long sertakan durationMin dan distanceKm yang realistis; untuk speed sertakan durationMin, steps detail (pemanasan, ulangan, pendinginan), dan note.',
@@ -778,6 +832,7 @@ export function buildAiTrainingPlanPrompt(input: AiTrainingPlanInput): string {
     '',
     'Metrik Terkini:',
     `- Program aktif: ${curriculumLabel}`,
+    `- Kondisi pelari: ${AI_WEEK_CONDITION_LABEL[condition]}`,
     `- Hari latihan rutin: ${daysText}`,
     `- ACWR: ${acwrText}`,
     `- Tren EF: ${efText}`,

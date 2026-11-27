@@ -10,6 +10,9 @@ export interface GpxPoint {
   cad: number | null;
 }
 
+/** Cadence per kaki (≈ 60–100) dikali 2; nilai ≥ 120 dianggap sudah spm. */
+export const toSpm = (raw: number): number => (raw >= 120 ? raw : raw * 2);
+
 const R = 6_371_000;
 export function haversineM(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
   const rad = (x: number) => (x * Math.PI) / 180;
@@ -68,6 +71,7 @@ export function analyzeGpxPoints(pts: ReadonlyArray<GpxPoint>, profileMaxHr?: nu
   const laps: LapSplit[] = [];
   let lapDist = 0;
   let lapStart = pts[0].t;
+  let lapMoving = 0;
   let lapHrSum = 0;
   let lapHrN = 0;
 
@@ -90,7 +94,8 @@ export function analyzeGpxPoints(pts: ReadonlyArray<GpxPoint>, profileMaxHr?: nu
     dist += d;
     if (isMoving) {
       moving += dt;
-      const isRun = speed >= 1.8 || (b.cad != null && b.cad * 2 >= 145);
+      lapMoving += dt;
+      const isRun = speed >= 1.8 || (b.cad != null && toSpm(b.cad) >= 145);
       if (isRun) {
         if (inWalkStreak && hasRun && walkStreakSec >= 10) {
           walkCount++;
@@ -125,11 +130,12 @@ export function analyzeGpxPoints(pts: ReadonlyArray<GpxPoint>, profileMaxHr?: nu
     if (lapDist >= 1000) {
       laps.push({
         km: laps.length + 1,
-        paceSec: ((b.t - lapStart) / 1000) * (1000 / lapDist),
+        paceSec: (lapMoving > 0 ? lapMoving : (b.t - lapStart) / 1000) * (1000 / lapDist),
         avgHr: lapHrN ? Math.round(lapHrSum / lapHrN) : null,
       });
       lapDist = 0;
       lapStart = b.t;
+      lapMoving = 0;
       lapHrSum = 0;
       lapHrN = 0;
     }
@@ -221,8 +227,8 @@ export function analyzeGpxPoints(pts: ReadonlyArray<GpxPoint>, profileMaxHr?: nu
     avgPaceSecPerKm: durationSec / distanceKm,
     avgHr: hrN ? Math.round(hrSum / hrN) : null,
     maxHr: hrMax,
-    // Banyak perangkat mencatat cadence per kaki; dikali 2 untuk spm.
-    avgCadence: cadN ? Math.round((cadSum / cadN) * 2) : null,
+    // Banyak perangkat mencatat cadence per kaki; nilai < 120 dikali 2 untuk spm.
+    avgCadence: cadN ? Math.round(toSpm(cadSum / cadN)) : null,
     elevationGain: pts.some((p) => p.ele != null) ? Math.round(elevGain) : null,
     laps,
     ...(splitRatio != null ? { splitRatio } : {}),
@@ -237,6 +243,12 @@ export function analyzeGpxPoints(pts: ReadonlyArray<GpxPoint>, profileMaxHr?: nu
 export function parseGpx(xml: string, profileMaxHr?: number): Draft {
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) throw new Error('Berkas GPX tidak valid (XML rusak).');
+
+  const trk = doc.getElementsByTagName('trk')[0];
+  const trkType = trk ? (child(trk, 'type') ?? '').toLowerCase() : '';
+  if (/cycl|bik|ride|swim|row|ski/.test(trkType)) {
+    throw new Error(`Berkas GPX ini tampaknya bukan lari (jenis: ${trkType}).`);
+  }
 
   const pts: GpxPoint[] = [];
   for (const el of Array.from(doc.getElementsByTagName('trkpt'))) {

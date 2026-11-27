@@ -1,18 +1,20 @@
 {
   "name": "pacelab-pwa",
   "private": true,
-  "version": "2.3.0",
+  "version": "2.4.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "start": "node server.ts",
+    "dev": "tsx server.ts --dev",
+    "start": "tsx server.ts",
     "build": "tsc --noEmit && vite build",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/analytics/analytics.test.ts src/analytics/coach.test.ts src/analytics/aiCoach.test.ts src/analytics/raceDayAnalyzer.test.ts src/plans/pace.test.ts src/parsers/fitParser.test.ts src/parsers/gpxParser.test.ts src/components/historyFilter.test.ts src/db/validate.test.ts src/plans/schedule.test.ts src/plans/adaptiveEngine.test.ts src/plans/planSelector.test.ts src/analytics/progressSummary.test.ts src/plans/maf.test.ts src/components/nextSession.test.ts src/analytics/sessionAnalysis.test.ts src/plans/shoeStore.test.ts src/components/hrZoneDistribution.test.ts"
+    "test": "node --experimental-strip-types --test src/analytics/analytics.test.ts src/analytics/coach.test.ts src/analytics/aiCoach.test.ts src/analytics/raceDayAnalyzer.test.ts src/plans/pace.test.ts src/parsers/fitParser.test.ts src/parsers/gpxParser.test.ts src/components/historyFilter.test.ts src/db/validate.test.ts src/plans/schedule.test.ts src/plans/adaptiveEngine.test.ts src/plans/planSelector.test.ts src/analytics/progressSummary.test.ts src/plans/maf.test.ts src/components/nextSession.test.ts src/analytics/sessionAnalysis.test.ts src/plans/shoeStore.test.ts src/components/hrZoneDistribution.test.ts src/plans/hrZones.test.ts src/components/weekDays.test.ts"
   },
   "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
     "@fontsource/inter": "^5.0.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/plus-jakarta-sans": "^5.0.0",
     "@google/genai": "^3.6.1",
     "@types/express": "^5.0.6",

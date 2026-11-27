@@ -42,3 +42,37 @@ test('FIT: split per km dari record', () => {
 test('FIT: tolak berkas bukan FIT', () => {
   assert.throws(() => parseFit(new ArrayBuffer(20)), /Bukan berkas FIT/);
 });
+
+function buildFitWithSessionExtra({ sport, cadence }: { sport?: number; cadence?: number }): ArrayBuffer {
+  const b: number[] = [];
+  const u8 = (...xs: number[]) => { b.push(...xs); };
+  const u16 = (v: number) => { b.push(v & 255, (v >>> 8) & 255); };
+  const u32 = (v: number) => { b.push(v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255); };
+
+  u8(0x41, 0, 0); u16(18);
+  const fields: Array<[number, number, number, () => void]> = [
+    [2, 4, 0x86, () => u32(T0)],
+    [8, 4, 0x86, () => u32(305000)],
+    [9, 4, 0x86, () => u32(200000)],
+  ];
+  if (sport !== undefined) fields.push([5, 1, 0x00, () => u8(sport)]);
+  if (cadence !== undefined) fields.push([18, 1, 0x02, () => u8(cadence)]);
+  u8(fields.length);
+  for (const [num, size, base] of fields) u8(num, size, base);
+  u8(0x01);
+  for (const [, , , write] of fields) write();
+
+  const n = b.length;
+  const hdr = [14, 16, 0, 0, n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255, 0x2e, 0x46, 0x49, 0x54, 0, 0];
+  return new Uint8Array([...hdr, ...b, 0, 0]).buffer;
+}
+
+test('FIT: menolak sport non-lari (mis. sepeda=2) dan menerima running (1)', () => {
+  assert.throws(() => parseFit(buildFitWithSessionExtra({ sport: 2 })), /bukan aktivitas lari/i);
+  assert.equal(parseFit(buildFitWithSessionExtra({ sport: 1 })).distanceKm, 2);
+});
+
+test('FIT: cadence >= 120 dianggap sudah spm dan tidak dikali 2 lagi', () => {
+  assert.equal(parseFit(buildFitWithSessionExtra({ sport: 1, cadence: 174 })).avgCadence, 174);
+  assert.equal(parseFit(buildFitWithSessionExtra({ sport: 1, cadence: 86 })).avgCadence, 172);
+});

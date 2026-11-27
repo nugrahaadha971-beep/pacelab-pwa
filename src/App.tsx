@@ -10,6 +10,7 @@ import Profil from './components/Profil';
 import CatatSheet from './components/CatatSheet';
 import BrandLogo from './components/BrandLogo';
 import { fmtHms } from './components/format';
+import { clearSwUpdate, subscribeSwUpdate } from './swUpdate';
 
 export type AppTab = 'beranda' | 'program' | 'analitik' | 'riwayat' | 'profil';
 
@@ -30,12 +31,21 @@ export default function App() {
   const [catatOpen, setCatatOpen] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null | undefined>(undefined);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [swUpdateFn, setSwUpdateFn] = useState<(() => void) | null>(null);
 
   const reload = async () => {
-    setProfile((await db.userProfile.get('default')) ?? null);
-    setWorkouts(await db.workouts.toArray());
+    try {
+      const [p, w] = await Promise.all([db.userProfile.get('default'), db.workouts.toArray()]);
+      setProfile(p ?? null);
+      setWorkouts(w);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Penyimpanan lokal tidak dapat dibuka.');
+    }
   };
   useEffect(() => { void reload(); }, []);
+  useEffect(() => subscribeSwUpdate((fn) => setSwUpdateFn(() => fn)), []);
   useEffect(() => { window.scrollTo(0, 0); }, [tab]);
   useEffect(() => {
     const splash = document.getElementById('initial-splash');
@@ -47,6 +57,24 @@ export default function App() {
     }, 320);
     return () => window.clearTimeout(timer);
   }, []);
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-[#09090B] px-6 text-center text-zinc-300">
+        <p className="text-sm font-semibold text-rose-400">Gagal membuka penyimpanan lokal.</p>
+        <p className="max-w-sm text-xs text-zinc-400">
+          {loadError} Jika memakai mode privat, buka PACELAB di jendela biasa. Data tidak dihapus.
+        </p>
+        <button
+          type="button"
+          onClick={() => void reload()}
+          className="min-h-[44px] rounded-2xl bg-[#BEF264] px-5 font-display text-sm font-extrabold text-[#09090B]"
+        >
+          Coba lagi
+        </button>
+      </div>
+    );
+  }
 
   if (profile === undefined) {
     return (
@@ -269,6 +297,36 @@ export default function App() {
           })}
         </nav>
       </div>
+
+      {swUpdateFn && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-x-4 bottom-20 z-50 mx-auto flex max-w-md flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#BEF264]/40 bg-[#121215]/95 px-4 py-3 text-xs text-zinc-100 shadow-2xl backdrop-blur-md md:bottom-5 md:left-auto md:right-6"
+        >
+          <span className="font-semibold">Versi baru PACELAB tersedia.</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => clearSwUpdate()}
+              className="min-h-[44px] rounded-xl border border-white/10 bg-[#18181D] px-3 font-semibold text-zinc-300 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+            >
+              Nanti
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const fn = swUpdateFn;
+                clearSwUpdate();
+                fn();
+              }}
+              className="min-h-[44px] rounded-xl bg-[#BEF264] px-3.5 font-display font-extrabold text-[#09090B] hover:bg-[#d4fc82] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+            >
+              Muat ulang
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

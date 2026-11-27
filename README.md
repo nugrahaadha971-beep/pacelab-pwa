@@ -1,4 +1,4 @@
-# PACELAB (v1.4.0-offline)
+# PACELAB (v2.4.0)
 
 ## Status per fase
 - **Fase 1** Scaffold Vite + React + TS, skema Dexie (`workouts`, `userProfile`), ekspor/impor JSON, layar profil. Tailwind belum dipasang.
@@ -201,19 +201,37 @@ Setiap sesi latihan kini dievaluasi terhadap zona targetnya, bukan hanya dicatat
 
 
 
+## v2.3.1 — Perbaikan bug & keandalan inti
+- **ACWR pengguna baru (`BUG-01`)**: baseline kronis 28 hari dibagi jumlah minggu riwayat yang tersedia (`Math.min(4, historyDays / 7)`) dan membutuhkan minimal 14 hari riwayat (`ACWR_MIN_HISTORY_DAYS = 14`) sebelum dinilai, sehingga pelari baru tidak otomatis berstatus `high_fatigue`.
+- **Validasi input & cadangan (`BUG-02`..`BUG-05`)**: menolak durasi `0`, jarak `> 300 km`, dan pace di luar `2:00–20:00 /km`; melarang target waktu `0` dan mengatur batas rentang usia (`10–100`), Resting HR (`30–120`), Max HR (`> Resting HR`, maks `230`); melaporkan sesi rusak yang dilewati saat impor; menyertakan data sepatu & preferensi (`pacelab_shoes`, `pacelab.planMode`, `pacelab.mafAdj`, `pacelab.k5`) ke cadangan JSON v3 (`prefs`) tanpa mengekspor API key Gemini; memastikan "Hapus semua data lokal" membersihkan seluruh kunci di `ALL_LOCAL_KEYS` termasuk API key & cache AI.
+- **Parser & ketahanan (`BUG-06`..`BUG-12`)**: pace lap GPX/FIT memakai waktu bergerak (mengabaikan jeda/auto-pause); deteksi spm (`toSpm`) tidak menggandakan cadence `>= 120`; pemuatan IndexedDB dibungkus `try/catch` dengan layar pemulihan; `npm start` menjalankan server produksi `tsx server.ts` sementara `npm run dev` memakai `tsx server.ts --dev`; cache Pelatih AI menyertakan tanda tangan sesi (jenis, RPE, HR, jarak, durasi), profil, dan program; batas waktu per model Gemini dinaikkan menjadi 30 detik (anggaran total 75 detik) dengan penutupan stream respons; `/api/race-day-analyze` mendukung `GEMINI_MODELS` (daftar dipisah koma, default `gemini-4-hydrogen`), sanitasi snapshot, pembatas laju per IP, dan tanpa membocorkan error mentah ke klien.
+- **Konfigurasi model Gemini**: atur `GEMINI_MODELS=gemini-4-hydrogen,gemini-2.5-flash` di `.env` (urutan prioritas cadangan).
+
+## v2.4.0 — Peningkatan & fitur baru
+- **Peningkatan (`IMP-01`..`IMP-08`)**: endpoint relatif `'api/race-day-analyze'`; font `@fontsource/dm-sans` dan `@fontsource/jetbrains-mono` dibundel offline dan tag Google Fonts CDN dihapus; FIT/GPX non-lari (sepeda, renang, dayung, ski) ditolak saat jenis olahraga terdeteksi; opsi jenis kelamin (`male`/`female`) untuk koefisien Banister TRIMP (`0,86 / 1,67` untuk wanita); kunci `'pacelab.k5'` dipusatkan di `src/plans/k5Store.ts`; CI memakai Node 22 + `npm ci`; `steadyDrift` membatasi perhitungan cardiac drift pada sesi `easy` dan `long_run`.
+- **Fitur (`FEAT-01`..`FEAT-05`)**:
+  1. Mode restore **Gabung** (melewati duplikat via `isDuplicate`) dan unduh otomatis salinan pengaman sebelum **Ganti semua**.
+  2. Edit sesi lengkap di Riwayat (tanggal, jarak, durasi untuk sesi manual, RPE 1–10, jenis sesi, sepatu, catatan) dengan hitung ulang TRIMP & EF otomatis lewat `finalizeWorkout`.
+  3. Permintaan `navigator.storage.persist()` saat startup serta pengingat cadangan di Beranda bila ekspor terakhir > 14 hari.
+  4. Pembaruan PWA berbasis prompt (`registerType: 'prompt'`) dengan banner non-blokir.
+  5. Indikator progres `"Mengumpulkan data beban latihan (X/14 hari)"` saat ACWR berstatus `unknown`.
+
 ## Deploy ke GitHub Pages
 
-1. Buat repositori GitHub baru (kosong), lalu dari folder proyek ini:
+1. Buat `package-lock.json` yang deterministik untuk CI (`npm ci`) lalu commit:
+   ```bash
+   npm install --package-lock-only
+   ```
+2. Buat repositori GitHub baru (kosong), lalu dari folder proyek ini:
    ```bash
    git init -b main
    git add .
-   git commit -m "PACELAB v2.3.0 + Proyeksi Race & Lini Masa MAF"
+   git commit -m "PACELAB v2.4.0"
    git remote add origin https://github.com/<user>/<repo>.git
    git push -u origin main
    ```
-2. Di GitHub: **Settings → Pages → Source: GitHub Actions**.
-3. Push ke `main` memicu `.github/workflows/deploy.yml` (tes → build → deploy). Setelah hijau, aplikasi berjalan di `https://<user>.github.io/<repo>/`.
-4. Opsional: jalankan `npm install` lalu commit `package-lock.json` agar workflow memakai `npm ci`.
+3. Di GitHub: **Settings → Pages → Source: GitHub Actions**.
+4. Push ke `main` memicu `.github/workflows/deploy.yml` (tes Node 22 → build Node 22 dengan `npm ci` → deploy). Setelah hijau, aplikasi berjalan di `https://<user>.github.io/<repo>/`.
 
 Lokal: `npm install && npm test && npm run build && npm run preview`.
 

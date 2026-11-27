@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 import type { UserProfile, Workout } from '../analytics/types';
-import { acwr, DAY_MS, efficiencyFactor, tanakaMaxHr, type AcwrStatus } from '../analytics/workload';
+import { acwr, acwrHistoryDays, DAY_MS, efficiencyFactor, tanakaMaxHr, type AcwrStatus } from '../analytics/workload';
 import { compareProgress } from '../analytics/progressSummary';
 import { resolveMaxHr } from '../plans/hrZones';
 import { fmtPace } from '../plans/pace';
@@ -22,6 +22,7 @@ import { weeklyKm } from './historyFilter';
 import AcwrGauge from './AcwrGauge';
 import HrZoneDistributionCard from './HrZoneDistributionCard';
 import PaceHrChartCard from './PaceHrChartCard';
+import ProgramEvaluationCard from './ProgramEvaluationCard';
 import { ScreenHeader, StatusPill, type Tone } from './ui';
 
 const RANGES = [7, 28, 90] as const;
@@ -150,7 +151,7 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
             <p className="mt-1 text-xs text-zinc-400">{acwrMeta.note}</p>
           </div>
           <div className="mt-4">
-            <AcwrGauge ratio={gauge.ratio} status={gauge.status} />
+            <AcwrGauge ratio={gauge.ratio} status={gauge.status} historyDays={acwrHistoryDays(workouts, now)} />
           </div>
         </section>
 
@@ -364,6 +365,9 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
           maxHr={effectiveMaxHr}
           className="lg:col-span-12"
         />
+
+        {/* Evaluasi AI Hasil Program (dipindah dari tab Program) */}
+        <ProgramEvaluationCard profile={profile} workouts={workouts} className="lg:col-span-12" />
       </div>
     </div>
   );

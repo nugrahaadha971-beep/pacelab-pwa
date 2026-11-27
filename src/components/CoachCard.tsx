@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Activity, ChevronDown, Heart, RefreshCw, Sparkles } from 'lucide-react';
 import type { UserProfile, Workout } from '../analytics/types';
-import { acwr, cardiacDrift, DAY_MS, efTrend } from '../analytics/workload';
+import { acwr, ACWR_MIN_HISTORY_DAYS, acwrHistoryDays, cardiacDrift, DAY_MS, efTrend } from '../analytics/workload';
 import type { AcwrStatus } from '../analytics/workload';
 import { velocityFor, ZONE_FRACTION } from '../analytics/predictor';
 import { coachAdvice, DRIFT_WARN_PCT } from '../analytics/coachEngine';
@@ -226,7 +226,14 @@ export default function CoachCard({
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<string | null>(() =>
-    loadCachedAiCoachAnalysis({ workouts, acwr: load, now: t }),
+    loadCachedAiCoachAnalysis({
+      profile,
+      curriculum: 'custom',
+      programTitle: scheduleState.programTitle,
+      workouts,
+      acwr: load,
+      now: t,
+    }),
   );
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -246,9 +253,16 @@ export default function CoachCard({
   }, []);
 
   useEffect(() => {
-    const cached = loadCachedAiCoachAnalysis({ workouts, acwr: load, now: t });
-    if (cached) setAiResult(cached);
-  }, [workouts, load.ratio, load.status]);
+    const cached = loadCachedAiCoachAnalysis({
+      profile,
+      curriculum: 'custom',
+      programTitle: scheduleState.programTitle,
+      workouts,
+      acwr: load,
+      now: t,
+    });
+    setAiResult(cached);
+  }, [workouts, load.ratio, load.status, profile, scheduleState.programTitle]);
 
   const canAnalyzeAi = hasApiKey && isOnline && !aiLoading;
 
@@ -426,7 +440,9 @@ export default function CoachCard({
             </div>
           ) : (
             <p className="text-xs text-zinc-400">
-              Butuh lebih banyak catatan sesi untuk menghitung rasio beban tubuh (ACWR).
+              {load.status === 'unknown'
+                ? `Mengumpulkan data beban latihan (${Math.min(acwrHistoryDays(workouts, t), ACWR_MIN_HISTORY_DAYS)}/${ACWR_MIN_HISTORY_DAYS} hari). ACWR muncul setelah ${ACWR_MIN_HISTORY_DAYS} hari riwayat.`
+                : 'Butuh lebih banyak catatan sesi untuk menghitung rasio beban tubuh (ACWR).'}
             </p>
           )}
 

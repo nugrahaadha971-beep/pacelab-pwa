@@ -1,5 +1,5 @@
 // Mesin penyesuaian program otomatis. Murni (tanpa UI) agar bisa diuji dengan node:test.
-import { acwr, cardiacDrift, DAY_MS, efficiencyFactor } from '../analytics/workload.ts';
+import { acwr, DAY_MS, efficiencyFactor, steadyDrift } from '../analytics/workload.ts';
 import type { UserProfile, Workout } from '../analytics/types.ts';
 import { dayNum, isoFromLocal } from './schedule.ts';
 import type { Adjustment, IsoDate, PlanSession } from './schedule.ts';
@@ -102,7 +102,7 @@ export function gatherAdaptiveInput(workouts: Workout[], profile: UserProfile, n
       acwrRatio: ratio,
       lastEf: efOf(last),
       avgEf14: base.length ? base.reduce((a, b) => a + b, 0) / base.length : null,
-      lastDriftPct: cardiacDrift(last.laps),
+      lastDriftPct: steadyDrift(last),
     },
     last: { date: last.date, type: last.workoutType, distanceKm: last.distanceKm },
   };
