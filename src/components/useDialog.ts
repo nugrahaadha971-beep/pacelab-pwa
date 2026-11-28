@@ -11,16 +11,19 @@ const stack: symbol[] = [];
  * halaman di belakang tidak ikut menggulir, dan fokus kembali ke pemicu saat ditutup.
  * Pasang `ref` yang dikembalikan pada elemen dengan role="dialog".
  */
-export function useDialog<T extends HTMLElement>(onClose: () => void) {
+export function useDialog<T extends HTMLElement>(onClose: () => void, active = true) {
   const ref = useRef<T>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
   useEffect(() => {
+    if (!active) {
+      if (stack.length === 0) document.body.style.overflow = '';
+      return;
+    }
     const id = Symbol('dialog');
     stack.push(id);
     const trigger = document.activeElement as HTMLElement | null;
-    const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     ref.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
 
@@ -40,10 +43,10 @@ export function useDialog<T extends HTMLElement>(onClose: () => void) {
       document.removeEventListener('keydown', onKey);
       const i = stack.indexOf(id);
       if (i >= 0) stack.splice(i, 1);
-      document.body.style.overflow = prevOverflow;
+      document.body.style.overflow = stack.length === 0 ? '' : 'hidden';
       trigger?.focus?.();
     };
-  }, []);
+  }, [active]);
 
   return ref;
 }

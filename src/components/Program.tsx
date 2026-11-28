@@ -337,24 +337,26 @@ export default function Program({
         />
       )}
 
-      <WorkoutBuilderModal
-        isOpen={Boolean(builderState)}
-        initialDate={selectedDate ?? todayIso}
-        initialData={
-          builderState?.mode === 'edit' && builderState.session
-            ? {
-                date: builderState.session.date,
-                category: kindToCategory(builderState.session.kind),
-                title: builderState.session.name,
-                structuredSteps: builderState.session.structuredSteps,
-              }
-            : undefined
-        }
-        maxHr={maxHr}
-        restingHr={restingHr}
-        onClose={() => setBuilderState(null)}
-        onSave={handleSaveBuilder}
-      />
+      {builderState && (
+        <WorkoutBuilderModal
+          isOpen
+          initialDate={selectedDate ?? todayIso}
+          initialData={
+            builderState.mode === 'edit' && builderState.session
+              ? {
+                  date: builderState.session.date,
+                  category: kindToCategory(builderState.session.kind),
+                  title: builderState.session.name,
+                  structuredSteps: builderState.session.structuredSteps,
+                }
+              : undefined
+          }
+          maxHr={maxHr}
+          restingHr={restingHr}
+          onClose={() => setBuilderState(null)}
+          onSave={handleSaveBuilder}
+        />
+      )}
     </div>
   );
 }

@@ -95,7 +95,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-dvh bg-[#09090B] text-zinc-100">
+    <div className="flex min-h-dvh flex-col bg-[#09090B] text-zinc-100">
       {/* Desktop Left Sidebar (>= 768px): 4 Tab Utama + CTA Catat Lari */}
       <aside
         aria-label="Navigasi desktop"
@@ -184,7 +184,7 @@ export default function App() {
       </header>
 
       {/* Main Content Canvas */}
-      <div className="md:pl-60 lg:pl-64">
+      <div className="flex flex-1 flex-col md:pl-60 lg:pl-64">
         {/* Desktop Top Utility Bar (>= 768px) — Ikon Profil Pojok Kanan Atas */}
         <header className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b border-white/10 bg-[#09090B]/85 px-6 backdrop-blur-md md:flex lg:px-8">
           <button
@@ -203,7 +203,7 @@ export default function App() {
           </button>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl px-4 pb-28 pt-5 sm:px-6 md:pb-12 md:pt-6 lg:px-8">
+        <main className="mx-auto w-full max-w-7xl flex-1 overflow-y-auto overscroll-y-contain px-4 pb-28 pt-5 sm:px-6 md:pb-12 md:pt-6 lg:px-8">
           {tab === 'beranda' && (
             <Beranda
               profile={profile}

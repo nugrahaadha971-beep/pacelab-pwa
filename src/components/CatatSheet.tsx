@@ -24,7 +24,6 @@ export default function CatatSheet({
 
   useEffect(() => {
     if (!open) return;
-    const prevOverflow = document.body.style.overflow;
     const prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
     closeRef.current?.focus();
@@ -41,7 +40,7 @@ export default function CatatSheet({
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
+      document.body.style.overflow = '';
       prevFocus?.focus();
     };
   }, [open, onClose]);

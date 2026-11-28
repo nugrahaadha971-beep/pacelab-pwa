@@ -420,7 +420,7 @@ export default function TrainingPlan({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-8">
       {/* Kalender Mingguan Horizontal (Sen–Min) */}
       <WeekStrip
         weekStartIso={weekStartIso}

@@ -199,7 +199,7 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
 }) => {
   const titleId = useId();
   const dateInputId = useId();
-  const dialogRef = useDialog<HTMLDivElement>(onClose);
+  const dialogRef = useDialog<HTMLDivElement>(onClose, isOpen);
 
   const [stepTab, setStepTab] = useState<1 | 2>(1);
   const [date, setDate] = useState(initialData?.date ?? initialDate);
