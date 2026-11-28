@@ -1,33 +1,27 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, CalendarDays, History, Home, Plus, User } from 'lucide-react';
+import { BarChart3, CalendarDays, Home, Plus, User } from 'lucide-react';
 import { db } from './db/database';
 import type { UserProfile, Workout } from './analytics/types';
 import Beranda from './components/Beranda';
 import Program from './components/Program';
-import Analitik from './components/Analitik';
-import Riwayat from './components/Riwayat';
+import Statistik, { type StatistikSubTab } from './components/Statistik';
 import Profil from './components/Profil';
 import CatatSheet from './components/CatatSheet';
 import BrandLogo from './components/BrandLogo';
 import { fmtHms } from './components/format';
 import { clearSwUpdate, subscribeSwUpdate } from './swUpdate';
 
-export type AppTab = 'beranda' | 'program' | 'analitik' | 'riwayat' | 'profil';
+export type AppTab = 'beranda' | 'program' | 'statistik' | 'profil';
 
-const LEFT_TABS = [
-  { id: 'beranda', label: 'Beranda', Icon: Home },
-  { id: 'program', label: 'Program', Icon: CalendarDays },
+const MAIN_TABS = [
+  { id: 'beranda', label: 'Hari Ini', Icon: Home },
+  { id: 'program', label: 'Jadwal', Icon: CalendarDays },
+  { id: 'statistik', label: 'Statistik', Icon: BarChart3 },
 ] as const;
-
-const RIGHT_TABS = [
-  { id: 'analitik', label: 'Analitik', Icon: BarChart3 },
-  { id: 'riwayat', label: 'Riwayat', Icon: History },
-] as const;
-
-const MAIN_TABS = [...LEFT_TABS, ...RIGHT_TABS] as const;
 
 export default function App() {
   const [tab, setTab] = useState<AppTab>('beranda');
+  const [statistikTab, setStatistikTab] = useState<StatistikSubTab>('analitik');
   const [catatOpen, setCatatOpen] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null | undefined>(undefined);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
@@ -46,7 +40,11 @@ export default function App() {
   };
   useEffect(() => { void reload(); }, []);
   useEffect(() => subscribeSwUpdate((fn) => setSwUpdateFn(() => fn)), []);
-  useEffect(() => { window.scrollTo(0, 0); }, [tab]);
+  useEffect(() => { window.scrollTo(0, 0); }, [tab, statistikTab]);
+  const openStatistik = (subTab: StatistikSubTab) => {
+    setStatistikTab(subTab);
+    setTab('statistik');
+  };
   useEffect(() => {
     const splash = document.getElementById('initial-splash');
     if (!splash) return;
@@ -96,7 +94,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-[#09090B] text-zinc-100">
-      {/* Desktop Left Sidebar (>= 768px): 4 Tab Utama + CTA Catat Lari */}
+      {/* Desktop Left Sidebar (>= 768px): 3 Tab Utama + CTA Catat Lari */}
       <aside
         aria-label="Navigasi desktop"
         className="hidden md:fixed md:inset-y-0 md:left-0 md:z-30 md:flex md:w-60 md:flex-col md:border-r md:border-white/10 md:bg-[#0B0B0E]/90 md:backdrop-blur-md lg:w-64"
@@ -119,7 +117,7 @@ export default function App() {
             className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl bg-[#BEF264] px-4 font-display text-sm font-extrabold text-[#09090B] shadow-[0_0_24px_rgba(190,242,100,0.2)] transition duration-150 hover:bg-[#d4fc82] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090B]"
           >
             <Plus size={18} strokeWidth={2.6} aria-hidden />
-            <span className="whitespace-nowrap">Catat Lari</span>
+            <span className="whitespace-nowrap">Upload .FIT / Catat Lari</span>
           </button>
         </div>
 
@@ -203,12 +201,14 @@ export default function App() {
           </button>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 min-h-0 px-4 pb-28 pt-5 sm:px-6 md:pb-12 md:pt-6 lg:px-8">
+        <main className="mx-auto w-full max-w-7xl flex-1 min-h-0 px-4 pb-24 pt-5 sm:px-6 md:pb-12 md:pt-6 lg:px-8">
           {tab === 'beranda' && (
             <Beranda
               profile={profile}
               workouts={workouts}
               onNavigate={setTab}
+              onOpenStatistik={openStatistik}
+              onOpenCatat={() => setCatatOpen(true)}
             />
           )}
           {tab === 'program' && (
@@ -216,11 +216,14 @@ export default function App() {
               <Program profile={profile} workouts={workouts} onProfileChange={reload} />
             </div>
           )}
-          {tab === 'analitik' && <Analitik profile={profile} workouts={workouts} />}
-          {tab === 'riwayat' && (
-            <div className="mx-auto max-w-4xl">
-              <Riwayat profile={profile} workouts={workouts} reload={reload} />
-            </div>
+          {tab === 'statistik' && (
+            <Statistik
+              profile={profile}
+              workouts={workouts}
+              reload={reload}
+              subTab={statistikTab}
+              onSubTabChange={setStatistikTab}
+            />
           )}
           {tab === 'profil' && (
             <div className="mx-auto max-w-3xl">
@@ -234,49 +237,16 @@ export default function App() {
         <CatatSheet profile={profile} open onClose={() => setCatatOpen(false)} onSaved={reload} />
       )}
 
-      {/* Mobile Fixed Bottom Navigation Bar (< 768px): 4 Tab + 1 Tombol Tengah (+) */}
+      {/* Mobile Fixed Bottom Navigation Bar (< 768px): 3 Tab Utama */}
       <div
-        className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#09090B]/90 backdrop-blur-md md:hidden"
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#09090B]/95 backdrop-blur-md md:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <nav
           aria-label="Navigasi utama"
-          className="pointer-events-auto mx-auto grid max-w-lg grid-cols-5 items-center px-2 py-1.5"
+          className="pointer-events-auto mx-auto grid max-w-lg grid-cols-3 items-center px-2 py-1.5"
         >
-          {LEFT_TABS.map(({ id, label, Icon }) => {
-            const active = tab === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setTab(id)}
-                aria-label={label}
-                aria-current={active ? 'page' : undefined}
-                className={`relative flex min-h-[44px] flex-col items-center justify-center gap-0.5 rounded-2xl text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
-                  active ? 'text-[#BEF264]' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                {active && (
-                  <span aria-hidden className="absolute top-0.5 h-0.5 w-6 rounded-full bg-[#BEF264]" />
-                )}
-                <Icon size={20} strokeWidth={active ? 2.4 : 1.9} aria-hidden />
-                <span className="whitespace-nowrap">{label}</span>
-              </button>
-            );
-          })}
-
-          <div className="flex items-center justify-center">
-            <button
-              type="button"
-              onClick={() => setCatatOpen(true)}
-              aria-label="Catat lari"
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-[#BEF264] text-[#09090B] shadow-[0_0_20px_rgba(190,242,100,0.35)] transition active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090B]"
-            >
-              <Plus size={24} strokeWidth={2.75} aria-hidden />
-            </button>
-          </div>
-
-          {RIGHT_TABS.map(({ id, label, Icon }) => {
+          {MAIN_TABS.map(({ id, label, Icon }) => {
             const active = tab === id;
             return (
               <button

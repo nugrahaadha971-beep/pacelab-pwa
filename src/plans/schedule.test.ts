@@ -776,6 +776,29 @@ test('Schedule persistence: setelah semua sesi dihapus (sessions = []), loadSche
   }
 });
 
+test('upsertEditedSession memperbarui sesi bawaan maupun AI ke customSessions tanpa duplikasi', async () => {
+  const { upsertEditedSession, applyScheduleState, buildPlan, flattenPlan } = await import('./schedule.ts');
+  const o = opts({ raceIso: '2026-12-20' });
+  const basePlan = buildPlan(o);
+  const baseFirst = flattenPlan(basePlan).find((s) => s.kind !== 'race')!;
+
+  // Edit sesi bawaan & pindahkan tanggalnya
+  const editedBase = upsertEditedSession(DEFAULT_SCHEDULE_STATE, baseFirst, {
+    date: '2026-11-18',
+    kind: 'speed',
+    name: 'Interval Suntingan',
+    durationMin: 38,
+    distanceKm: 6,
+  });
+
+  const merged = flattenPlan(applyScheduleState(basePlan, editedBase, o.raceIso));
+  assert.equal(merged.some((s) => s.id === baseFirst.id), false, 'sesi bawaan asli tidak muncul ganda');
+  const editedItem = merged.find((s) => s.name === 'Interval Suntingan');
+  assert.ok(editedItem);
+  assert.equal(editedItem.date, '2026-11-18');
+  assert.equal(editedItem.kind, 'speed');
+});
+
 
 
 

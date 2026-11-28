@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useState } from 'react';
-import { CalendarDays, X } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronUp, Trash2, X } from 'lucide-react';
 import {
   DurationType,
   SessionCategory,
@@ -16,18 +16,25 @@ import {
 import { formatDayMonthYear, isValidIso } from '../plans/schedule';
 import { useDialog } from './useDialog';
 
+export interface WorkoutBuilderInitialData {
+  date: string;
+  category: SessionCategory;
+  title: string;
+  durationMin?: number | null;
+  distanceKm?: number | null;
+  hr?: [number, number] | null;
+  pace?: [number, number] | null;
+  structuredSteps?: WorkoutBlock[];
+}
+
 interface Props {
   isOpen: boolean;
   initialDate: string; // YYYY-MM-DD
-  initialData?: {
-    date: string;
-    category: SessionCategory;
-    title: string;
-    structuredSteps?: WorkoutBlock[];
-  };
+  initialData?: WorkoutBuilderInitialData;
   maxHr?: number;
   restingHr?: number | null;
   onClose: () => void;
+  onDelete?: () => void;
   onSave: (payload: {
     date: string;
     category: SessionCategory;
@@ -41,12 +48,26 @@ interface Props {
   }) => void;
 }
 
-const KIND_STYLE: Record<StepKind, { label: string; border: string; fill: string }> = {
-  warmup: { label: 'Warm Up', border: 'border-l-rose-500', fill: '#f43f5e' },
-  run: { label: 'Run', border: 'border-l-sky-400', fill: '#38bdf8' },
-  recover: { label: 'Recover', border: 'border-l-zinc-400', fill: '#a1a1aa' },
-  cooldown: { label: 'Cool Down', border: 'border-l-emerald-400', fill: '#34d399' },
+const KIND_STYLE: Record<StepKind, { label: string; dot: string; fill: string }> = {
+  warmup: { label: 'Warm Up', dot: 'bg-rose-500', fill: '#f43f5e' },
+  run: { label: 'Run', dot: 'bg-sky-400', fill: '#38bdf8' },
+  recover: { label: 'Recover', dot: 'bg-zinc-400', fill: '#a1a1aa' },
+  cooldown: { label: 'Cool Down', dot: 'bg-emerald-400', fill: '#34d399' },
 };
+
+const DEFAULT_TITLE_BY_CATEGORY: Record<SessionCategory, string> = {
+  easy: 'Easy Run',
+  long: 'Long Run',
+  speed: 'Norwegian 4×4',
+  race: 'Hari Lomba',
+};
+
+const DEFAULT_TITLES = new Set([
+  ...Object.values(DEFAULT_TITLE_BY_CATEGORY),
+  'Easy Run Aerobik',
+  'Fartlek Ringan 5×1m',
+  'Long Run Akhir Pekan',
+]);
 
 function fmtMmSs(sec: number): string {
   const s = Math.max(0, Math.round(sec));
@@ -61,6 +82,33 @@ function parsePaceInput(val: string): number | null {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
+function hasComplexBlocks(blocks?: WorkoutBlock[]): boolean {
+  if (!blocks || blocks.length === 0) return false;
+  if (blocks.length > 1) return true;
+  return blocks[0].type === 'repeat';
+}
+
+function inferClosestZone(
+  hr: [number, number] | null | undefined,
+  maxHr: number,
+  restingHr: number | null,
+  fallback: 1 | 2 | 3 | 4 | 5,
+): 1 | 2 | 3 | 4 | 5 {
+  if (!hr) return fallback;
+  const mid = (hr[0] + hr[1]) / 2;
+  let best: 1 | 2 | 3 | 4 | 5 = fallback;
+  let bestDiff = Infinity;
+  for (const z of [1, 2, 3, 4, 5] as const) {
+    const [lo, hi] = getZoneBpm(z, maxHr, restingHr);
+    const diff = Math.abs(mid - (lo + hi) / 2);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = z;
+    }
+  }
+  return best;
+}
+
 function stepWeight(step: SingleStep): number {
   if (step.durationType === 'time' && step.durationValue) return Math.max(60, step.durationValue);
   if (step.durationType === 'distance' && step.durationValue) {
@@ -70,7 +118,10 @@ function stepWeight(step: SingleStep): number {
 }
 
 function stepHeightRatio(step: SingleStep): number {
-  if (step.kind === 'run' && (step.hrZone === 4 || step.hrZone === 5 || step.targetType === 'custom_hr' || step.targetType === 'pace')) {
+  if (
+    step.kind === 'run' &&
+    (step.hrZone === 4 || step.hrZone === 5 || step.targetType === 'custom_hr' || step.targetType === 'pace')
+  ) {
     return 1;
   }
   if (step.kind === 'run') return 0.75;
@@ -146,9 +197,12 @@ export function StructuredWorkoutPreview({
           block.type === 'step' ? (
             <div
               key={block.id}
-              className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.07] border-l-4 ${KIND_STYLE[block.kind].border} bg-[#121215] px-3 py-2 text-xs`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-[#121215] px-3 py-2 text-xs"
             >
-              <span className="font-semibold text-zinc-200">{KIND_STYLE[block.kind].label}</span>
+              <span className="inline-flex items-center gap-2 font-semibold text-zinc-200">
+                <span className={`h-2 w-2 rounded-full ${KIND_STYLE[block.kind].dot}`} aria-hidden />
+                {KIND_STYLE[block.kind].label}
+              </span>
               <span className="font-mono tabular-nums text-zinc-400">
                 {formatDuration(block.durationType, block.durationValue)} ·{' '}
                 <span className="font-semibold text-[#BEF264]">
@@ -164,13 +218,16 @@ export function StructuredWorkoutPreview({
               <div className="font-mono text-xs font-extrabold tabular-nums text-sky-400">
                 Repeat {block.count}×
               </div>
-              <div className="space-y-1 border-l-2 border-sky-400/40 pl-2">
+              <div className="space-y-1">
                 {block.steps.map((sub) => (
                   <div
                     key={sub.id}
-                    className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.06] border-l-4 ${KIND_STYLE[sub.kind].border} bg-[#121215] px-2.5 py-1.5 text-[11px]`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-[#121215] px-2.5 py-1.5 text-[11px]"
                   >
-                    <span className="font-semibold text-zinc-200">{KIND_STYLE[sub.kind].label}</span>
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-zinc-200">
+                      <span className={`h-1.5 w-1.5 rounded-full ${KIND_STYLE[sub.kind].dot}`} aria-hidden />
+                      {KIND_STYLE[sub.kind].label}
+                    </span>
                     <span className="font-mono tabular-nums text-zinc-400">
                       {formatDuration(sub.durationType, sub.durationValue)} ·{' '}
                       <span className="font-semibold text-[#BEF264]">
@@ -195,23 +252,27 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
   maxHr = 195,
   restingHr = 58,
   onClose,
+  onDelete,
   onSave,
 }) => {
   const titleId = useId();
   const dateInputId = useId();
   const dialogRef = useDialog<HTMLDivElement>(onClose, isOpen);
 
-  const [stepTab, setStepTab] = useState<1 | 2>(1);
   const [date, setDate] = useState(initialData?.date ?? initialDate);
-  const [category, setCategory] = useState<SessionCategory>(initialData?.category ?? 'speed');
-  const [title, setTitle] = useState(initialData?.title ?? 'Norwegian 4×4');
-  const [blocks, setBlocks] = useState<WorkoutBlock[]>(
-    () =>
-      structuredClone(
-        initialData?.structuredSteps && initialData.structuredSteps.length > 0
-          ? initialData.structuredSteps
-          : WORKOUT_PRESETS.norwegian4x4.blocks,
-      ),
+  const [category, setCategory] = useState<SessionCategory>(initialData?.category ?? 'easy');
+  const [title, setTitle] = useState(initialData?.title ?? 'Easy Run');
+  const [builderOpen, setBuilderOpen] = useState(false);
+
+  // Compact mode states
+  const [compactDurMode, setCompactDurMode] = useState<'time' | 'distance'>('time');
+  const [compactSec, setCompactSec] = useState(1800);
+  const [compactKm, setCompactKm] = useState(5);
+  const [compactZone, setCompactZone] = useState<1 | 2 | 3 | 4 | 5>(2);
+
+  // Garmin Builder states
+  const [blocks, setBlocks] = useState<WorkoutBlock[]>(() =>
+    structuredClone(WORKOUT_PRESETS.norwegian4x4.blocks),
   );
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [paceMinDraft, setPaceMinDraft] = useState<Record<string, string>>({});
@@ -219,25 +280,83 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    setStepTab(1);
-    setDate(initialData?.date ?? initialDate);
-    setCategory(initialData?.category ?? 'speed');
-    setTitle(initialData?.title ?? (initialData ? initialData.title : 'Norwegian 4×4'));
+
+    const nextCat = initialData?.category ?? 'easy';
+    const nextDate = initialData?.date ?? initialDate;
+    const nextTitle = initialData?.title ?? DEFAULT_TITLE_BY_CATEGORY[nextCat];
+    const structured = initialData?.structuredSteps;
+    const complex = hasComplexBlocks(structured);
+    const shouldExpand = Boolean(complex || (initialData && nextCat === 'speed' && !structured));
+
+    setDate(nextDate);
+    setCategory(nextCat);
+    setTitle(nextTitle);
+    setBuilderOpen(shouldExpand);
+
+    // Populate compact state from structured single-step or legacy fields
+    const single = structured?.length === 1 && structured[0].type === 'step' ? structured[0] : null;
+    if (single && single.durationType === 'distance') {
+      setCompactDurMode('distance');
+      setCompactKm(Math.max(0.5, Number(((single.durationValue ?? 5000) / 1000).toFixed(1))));
+      setCompactSec(1800);
+    } else if (single && single.durationType === 'time') {
+      setCompactDurMode('time');
+      setCompactSec(Math.max(5, single.durationValue ?? 1800));
+      setCompactKm(initialData?.distanceKm ?? 5);
+    } else if (initialData?.durationMin && initialData.durationMin > 0) {
+      setCompactDurMode('time');
+      setCompactSec(Math.max(60, Math.round(initialData.durationMin * 60)));
+      setCompactKm(initialData.distanceKm ?? 5);
+    } else if (initialData?.distanceKm && initialData.distanceKm > 0) {
+      setCompactDurMode('distance');
+      setCompactKm(initialData.distanceKm);
+      setCompactSec(Math.max(300, Math.round(initialData.distanceKm * 390)));
+    } else {
+      setCompactDurMode('time');
+      setCompactSec(1800);
+      setCompactKm(5);
+    }
+
+    const fallbackZone: 1 | 2 | 3 | 4 | 5 = nextCat === 'speed' || nextCat === 'race' ? 4 : 2;
+    const initZone = single?.hrZone ?? inferClosestZone(initialData?.hr, maxHr, restingHr, fallbackZone);
+    setCompactZone(initZone);
+
     setBlocks(
       structuredClone(
-        initialData?.structuredSteps && initialData.structuredSteps.length > 0
-          ? initialData.structuredSteps
+        structured && structured.length > 0
+          ? structured
           : WORKOUT_PRESETS.norwegian4x4.blocks,
       ),
     );
     setEditingStepId(null);
     setPaceMinDraft({});
     setPaceMaxDraft({});
-  }, [isOpen, initialData, initialDate]);
+  }, [isOpen, initialData, initialDate, maxHr, restingHr]);
+
+  const compactSingleBlock = useMemo<SingleStep>(
+    () => ({
+      id: 'compact-1',
+      type: 'step',
+      kind: 'run',
+      durationType: compactDurMode,
+      durationValue:
+        compactDurMode === 'time'
+          ? Math.max(5, Math.round(compactSec))
+          : Math.max(100, Math.round(compactKm * 1000)),
+      targetType: 'hr_zone',
+      hrZone: compactZone,
+    }),
+    [compactDurMode, compactSec, compactKm, compactZone],
+  );
+
+  const activeBlocks = useMemo<WorkoutBlock[]>(
+    () => (builderOpen ? blocks : [compactSingleBlock]),
+    [builderOpen, blocks, compactSingleBlock],
+  );
 
   const summary = useMemo(
-    () => summarizeWorkout(blocks, maxHr, restingHr),
-    [blocks, maxHr, restingHr],
+    () => summarizeWorkout(activeBlocks, maxHr, restingHr),
+    [activeBlocks, maxHr, restingHr],
   );
 
   if (!isOpen) return null;
@@ -245,11 +364,30 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
   const isEdit = Boolean(initialData);
   const displayDate = isValidIso(date) ? formatDayMonthYear(date) : 'Pilih tanggal';
 
+  const handleSelectCategory = (nextCat: SessionCategory) => {
+    setCategory(nextCat);
+    if (!title.trim() || DEFAULT_TITLES.has(title.trim())) {
+      setTitle(DEFAULT_TITLE_BY_CATEGORY[nextCat]);
+    }
+    if (nextCat === 'speed') {
+      setBuilderOpen(true);
+      if (!hasComplexBlocks(blocks)) {
+        setBlocks(structuredClone(WORKOUT_PRESETS.norwegian4x4.blocks));
+      }
+      setCompactZone(4);
+    } else if (nextCat === 'race') {
+      setCompactZone(4);
+    } else {
+      setCompactZone(2);
+    }
+  };
+
   const applyPreset = (key: keyof typeof WORKOUT_PRESETS) => {
     const p = WORKOUT_PRESETS[key];
     setTitle(p.title);
     setCategory(p.category);
     setBlocks(structuredClone(p.blocks));
+    setBuilderOpen(true);
     setEditingStepId(null);
   };
 
@@ -303,7 +441,7 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
     return (
       <div
         key={step.id}
-        className={`space-y-2 rounded-xl border border-white/10 border-l-4 ${style.border} bg-[#18181D] p-3`}
+        className="space-y-2 rounded-xl border border-white/10 bg-[#18181D] p-3"
       >
         <div className="flex items-center justify-between gap-2">
           <button
@@ -313,8 +451,11 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
             className="flex min-h-[44px] flex-1 items-center justify-between gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
           >
             <div>
-              <div className="text-xs font-semibold text-zinc-100">{style.label}</div>
-              <div className="font-mono text-[11px] tabular-nums text-zinc-400">
+              <div className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-100">
+                <span className={`h-2 w-2 rounded-full ${style.dot}`} aria-hidden />
+                <span>{style.label}</span>
+              </div>
+              <div className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-400">
                 {formatDuration(step.durationType, step.durationValue)} ·{' '}
                 <span className="font-semibold text-[#BEF264]">
                   {formatTarget(step, maxHr, restingHr)}
@@ -574,144 +715,264 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
         onClick={(e) => e.stopPropagation()}
         className="flex max-h-[90dvh] w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-[#121215] text-zinc-100 shadow-2xl sm:rounded-3xl"
       >
-        {/* Header & Step Switcher */}
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3.5">
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-3.5">
           <div className="min-w-0">
             <h3 id={titleId} className="font-display text-sm font-bold text-white">
-              {isEdit ? 'Edit Sesi Program' : 'Input Sesi Program'}
+              {isEdit ? 'Edit Sesi' : 'Tambah Sesi'}
             </h3>
-            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-400">
-              Estimasi:{' '}
+            <p className="mt-0.5 truncate font-mono text-[11px] tabular-nums text-zinc-400">
               {summary.totalSec < 60 || summary.totalSec % 60 !== 0
                 ? formatDuration('time', summary.totalSec)
                 : `${summary.durationMin} mnt`}{' '}
               · ~{summary.distanceKm} km · {summary.hrRange[0]}–{summary.hrRange[1]} bpm
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Tutup modal"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-400 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-          >
-            <X size={18} aria-hidden />
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {isEdit && onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                aria-label="Hapus Sesi"
+                className="inline-flex min-h-[40px] items-center gap-1 whitespace-nowrap rounded-xl border border-rose-500/30 bg-rose-500/10 px-2.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+              >
+                <Trash2 size={13} aria-hidden />
+                <span>Hapus Sesi</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Tutup modal"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-400 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+            >
+              <X size={18} aria-hidden />
+            </button>
+          </div>
         </div>
 
-        <div className="grid shrink-0 grid-cols-2 gap-1.5 border-b border-white/10 bg-[#18181D]/70 p-2 text-xs">
-          <button
-            type="button"
-            aria-pressed={stepTab === 1}
-            onClick={() => setStepTab(1)}
-            className={`min-h-[44px] rounded-xl font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
-              stepTab === 1 ? 'bg-[#BEF264] text-[#09090B]' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            1. Info & Preset
-          </button>
-          <button
-            type="button"
-            aria-pressed={stepTab === 2}
-            onClick={() => setStepTab(2)}
-            className={`min-h-[44px] rounded-xl font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
-              stepTab === 2 ? 'bg-[#BEF264] text-[#09090B]' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            2. Builder ala Garmin
-          </button>
-        </div>
-
-        {/* Scrollable Body */}
+        {/* Single Scrollable Form */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          {stepTab === 1 ? (
-            <>
-              <div>
-                <div className="mb-1.5 text-xs font-semibold text-zinc-400">Isi Cepat Preset</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      ['easy35', 'Easy Run 35m'],
-                      ['norwegian4x4', 'Norwegian 4×4'],
-                      ['fartlek5x1', 'Fartlek 5×1m'],
-                      ['long8k', 'Long Run 8 km'],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => applyPreset(key)}
-                      className="min-h-[44px] rounded-xl border border-white/10 bg-[#18181D] px-3 py-2 text-left text-xs font-semibold text-zinc-100 transition hover:border-[#BEF264]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+          <div className="space-y-1 text-xs">
+            <label htmlFor={dateInputId} className="block font-semibold text-zinc-400">
+              Tanggal Sesi
+            </label>
+            <div className="relative">
+              <input
+                id={dateInputId}
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+              />
+              <div className="flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#18181D] px-3 text-sm font-medium tabular-nums text-zinc-100 peer-focus-visible:border-[#BEF264] peer-focus-visible:ring-2 peer-focus-visible:ring-[#BEF264]/35">
+                <span>{displayDate}</span>
+                <CalendarDays size={16} className="shrink-0 text-zinc-400" aria-hidden />
               </div>
+            </div>
+          </div>
 
-              <div className="space-y-1 text-xs">
-                <label htmlFor={dateInputId} className="block font-semibold text-zinc-400">
-                  Tanggal Sesi
-                </label>
-                <div className="relative">
-                  <input
-                    id={dateInputId}
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-                  />
-                  <div className="flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#18181D] px-3 text-sm font-medium tabular-nums text-zinc-100 peer-focus-visible:border-[#BEF264] peer-focus-visible:ring-2 peer-focus-visible:ring-[#BEF264]/35">
-                    <span>{displayDate}</span>
-                    <CalendarDays size={16} className="shrink-0 text-zinc-400" aria-hidden />
-                  </div>
-                </div>
-              </div>
+          <div className="space-y-1 text-xs">
+            <span className="block font-semibold text-zinc-400">Kategori</span>
+            <div className="grid grid-cols-4 gap-1.5">
+              {(
+                [
+                  ['easy', 'Easy'],
+                  ['long', 'Long Run'],
+                  ['speed', 'Interval'],
+                  ['race', 'Lomba'],
+                ] as const
+              ).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  aria-pressed={category === val}
+                  onClick={() => handleSelectCategory(val)}
+                  className={`min-h-[44px] whitespace-nowrap rounded-xl border text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                    category === val
+                      ? 'border-[#BEF264] bg-[#BEF264] text-[#09090B]'
+                      : 'border-white/10 bg-[#18181D] text-zinc-300'
+                  }`}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
 
-              <div className="space-y-1 text-xs">
-                <span className="block font-semibold text-zinc-400">Kategori Sesi</span>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {(
-                    [
-                      ['easy', 'Easy'],
-                      ['long', 'Long Run'],
-                      ['speed', 'Interval'],
-                      ['race', 'Lomba'],
-                    ] as const
-                  ).map(([val, lbl]) => (
+          <label className="block space-y-1 text-xs">
+            <span className="font-semibold text-zinc-400">Nama Sesi</span>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Mis. Easy Run Pagi"
+              className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#18181D] px-3 text-sm text-zinc-100 focus:border-[#BEF264] focus:outline-none focus:ring-2 focus:ring-[#BEF264]/35"
+            />
+          </label>
+
+          {/* Compact Mode */}
+          {!builderOpen && (
+            <div className="space-y-4">
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-zinc-400">Target Durasi atau Jarak</span>
+                  <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-[#18181D] p-0.5">
                     <button
-                      key={val}
                       type="button"
-                      aria-pressed={category === val}
-                      onClick={() => setCategory(val)}
-                      className={`min-h-[44px] rounded-xl border text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
-                        category === val
-                          ? 'border-[#BEF264] bg-[#BEF264] text-[#09090B]'
-                          : 'border-white/10 bg-[#18181D] text-zinc-300'
+                      aria-pressed={compactDurMode === 'time'}
+                      onClick={() => setCompactDurMode('time')}
+                      className={`min-h-[34px] whitespace-nowrap rounded-lg px-2.5 text-[11px] font-bold transition ${
+                        compactDurMode === 'time'
+                          ? 'bg-[#BEF264] text-[#09090B]'
+                          : 'text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
-                      {lbl}
+                      Waktu (mm:ss)
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      aria-pressed={compactDurMode === 'distance'}
+                      onClick={() => setCompactDurMode('distance')}
+                      className={`min-h-[34px] whitespace-nowrap rounded-lg px-2.5 text-[11px] font-bold transition ${
+                        compactDurMode === 'distance'
+                          ? 'bg-[#BEF264] text-[#09090B]'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      Jarak (km)
+                    </button>
+                  </div>
+                </div>
+
+                {compactDurMode === 'time' ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1">
+                      <span className="text-zinc-400">Menit</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={Math.floor(compactSec / 60)}
+                        onChange={(e) => {
+                          const raw = Number(e.target.value);
+                          const mins = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+                          const secs = compactSec % 60;
+                          setCompactSec(Math.max(5, mins * 60 + secs));
+                        }}
+                        className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#18181D] px-3 font-mono text-sm tabular-nums text-zinc-100 focus:border-[#BEF264] focus:outline-none"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-zinc-400">Detik</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={59}
+                        value={compactSec % 60}
+                        onChange={(e) => {
+                          const raw = Number(e.target.value);
+                          const secs = Number.isFinite(raw)
+                            ? Math.max(0, Math.min(59, Math.floor(raw)))
+                            : 0;
+                          const mins = Math.floor(compactSec / 60);
+                          setCompactSec(Math.max(5, mins * 60 + secs));
+                        }}
+                        className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#18181D] px-3 font-mono text-sm tabular-nums text-zinc-100 focus:border-[#BEF264] focus:outline-none"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="block space-y-1">
+                    <span className="text-zinc-400">Jarak (km)</span>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step="0.1"
+                      value={compactKm}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setCompactKm(Number.isFinite(val) && val > 0 ? val : 0.1);
+                      }}
+                      className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#18181D] px-3 font-mono text-sm tabular-nums text-zinc-100 focus:border-[#BEF264] focus:outline-none"
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div className="space-y-1.5 text-xs">
+                <span className="block font-semibold text-zinc-400">Zona HR Target (Karvonen)</span>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {([1, 2, 3, 4, 5] as const).map((z) => {
+                    const [min, max] = getZoneBpm(z, maxHr, restingHr);
+                    const active = compactZone === z;
+                    return (
+                      <button
+                        key={z}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setCompactZone(z)}
+                        className={`min-h-[44px] rounded-xl border py-1.5 font-mono text-[11px] font-bold tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
+                          active
+                            ? 'border-[#BEF264] bg-[#BEF264] text-[#09090B]'
+                            : 'border-white/10 bg-[#18181D] text-zinc-300'
+                        }`}
+                      >
+                        Z{z}
+                        <span className="block text-[9px] font-medium opacity-85">
+                          {min}-{max}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              <label className="block space-y-1 text-xs">
-                <span className="font-semibold text-zinc-400">Nama Sesi</span>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Mis. Norwegian 4×4"
-                  className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#18181D] px-3 text-sm text-zinc-100 focus:border-[#BEF264] focus:outline-none focus:ring-2 focus:ring-[#BEF264]/35"
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              {/* Workout Profile Bar */}
+              <button
+                type="button"
+                onClick={() => setBuilderOpen(true)}
+                className="flex min-h-[44px] w-full items-center justify-between rounded-xl border border-white/10 bg-[#18181D] px-3.5 text-xs font-semibold text-zinc-300 transition hover:border-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+              >
+                <span>Atur Blok Interval / Langkah Garmin</span>
+                <ChevronDown size={15} aria-hidden />
+              </button>
+            </div>
+          )}
+
+          {/* Expandable Garmin Builder Mode */}
+          {builderOpen && (
+            <div className="space-y-3 border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-zinc-300">Blok Langkah Garmin</span>
+                <button
+                  type="button"
+                  onClick={() => setBuilderOpen(false)}
+                  className="inline-flex min-h-[36px] items-center gap-1 rounded-lg px-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+                >
+                  <span>Mode Ringkas</span>
+                  <ChevronUp size={14} aria-hidden />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    ['norwegian4x4', 'Preset Norwegian 4×4'],
+                    ['fartlek5x1', 'Preset Fartlek 5×1m'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => applyPreset(key)}
+                    className="min-h-[44px] rounded-xl border border-white/10 bg-[#18181D] px-3 py-2 text-left text-xs font-semibold text-zinc-100 transition hover:border-[#BEF264]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
               <WorkoutProfileBar blocks={blocks} />
 
-              {/* Steps & Repeat Blocks */}
               <div className="space-y-2.5">
                 {blocks.map((block) =>
                   block.type === 'step' ? (
@@ -767,7 +1028,7 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
                           Hapus Blok
                         </button>
                       </div>
-                      <div className="space-y-2 border-l-2 border-sky-400/40 pl-2">
+                      <div className="space-y-2 pl-2">
                         {block.steps.map((sub) => renderStepCard(sub, false))}
                       </div>
                     </div>
@@ -791,7 +1052,7 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
                   + Tambah Repeat
                 </button>
               </div>
-            </>
+            </div>
           )}
         </div>
 
@@ -813,19 +1074,19 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
               onSave({
                 date,
                 category,
-                title: title.trim() || 'Sesi Lari',
+                title: title.trim() || DEFAULT_TITLE_BY_CATEGORY[category],
                 durationMin: summary.durationMin,
                 distanceKm: summary.distanceKm,
                 hrRange: summary.hrRange,
                 paceRange: summary.paceRange,
                 steps: summary.steps,
-                structuredSteps: blocks,
+                structuredSteps: activeBlocks,
               });
               onClose();
             }}
             className="min-h-[44px] flex-1 rounded-xl bg-[#BEF264] text-xs font-extrabold text-[#09090B] transition hover:bg-[#d4fc82] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
           >
-            Simpan Sesi
+            Simpan
           </button>
         </div>
       </div>

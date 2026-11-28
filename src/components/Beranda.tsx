@@ -1,5 +1,6 @@
-import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, Footprints } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, Footprints, Upload } from 'lucide-react';
 import type { AppTab } from '../App';
+import type { StatistikSubTab } from './Statistik';
 import type { UserProfile, Workout } from '../analytics/types';
 import { DAY_MS } from '../analytics/workload';
 import { stripMarkdown } from '../analytics/raceDayAnalyzer';
@@ -10,12 +11,14 @@ import { calcAllShoesMileage, loadShoes } from '../plans/shoeStore';
 import { fmtHms, todayStr } from './format';
 import { nextSession } from './nextSession';
 import { KIND_LABEL } from './sessionMeta';
-import { Button, ScreenHeader, StatusPill } from './ui';
+import { Button, ScreenHeader } from './ui';
 
 interface BerandaProps {
   profile: UserProfile;
   workouts: Workout[];
   onNavigate: (tab: AppTab) => void;
+  onOpenStatistik: (subTab: StatistikSubTab) => void;
+  onOpenCatat: () => void;
 }
 
 const KIND_ACCENT: Record<string, string> = {
@@ -27,7 +30,7 @@ const KIND_ACCENT: Record<string, string> = {
 
 const dec = (n: number, digits = 1) => n.toFixed(digits).replace('.', ',');
 
-export default function Beranda({ profile, workouts, onNavigate }: BerandaProps) {
+export default function Beranda({ profile, workouts, onNavigate, onOpenStatistik, onOpenCatat }: BerandaProps) {
   const now = Date.now();
   const next = nextSession(profile, workouts, now);
 
@@ -104,7 +107,17 @@ export default function Beranda({ profile, workouts, onNavigate }: BerandaProps)
 
   return (
     <div className="space-y-4">
-      <ScreenHeader title="Beranda" subtitle="Ringkasan target, jadwal berikutnya & panduan latihan" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <ScreenHeader title="Hari Ini" subtitle="Ringkasan target, jadwal berikutnya & catatan lari" />
+        <button
+          type="button"
+          onClick={onOpenCatat}
+          className="inline-flex min-h-[48px] w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl bg-[#BEF264] px-5 font-display text-sm font-extrabold text-[#09090B] shadow-[0_0_24px_rgba(190,242,100,0.2)] transition duration-150 hover:bg-[#d4fc82] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090B] sm:w-auto"
+        >
+          <Upload size={17} strokeWidth={2.4} aria-hidden />
+          <span>Upload .FIT / Catat Lari</span>
+        </button>
+      </div>
 
       {backupOverdue(workouts.length, now) && (
         <section
@@ -169,14 +182,14 @@ export default function Beranda({ profile, workouts, onNavigate }: BerandaProps)
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            onClick={() => onNavigate('analitik')}
+            onClick={() => onOpenStatistik('analitik')}
             className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-2xl border border-white/10 bg-[#18181D] px-4 text-xs font-bold text-zinc-100 transition hover:border-white/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
           >
             <span>Detail Analitik →</span>
           </button>
           <button
             type="button"
-            onClick={() => onNavigate('riwayat')}
+            onClick={() => onOpenStatistik('riwayat')}
             className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-2xl border border-white/10 bg-[#18181D] px-4 text-xs font-bold text-zinc-100 transition hover:border-white/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
           >
             <span>Lihat Riwayat →</span>
@@ -236,7 +249,7 @@ export default function Beranda({ profile, workouts, onNavigate }: BerandaProps)
           <div className="relative mt-3 rounded-2xl border border-dashed border-white/10 bg-[#18181D]/60 p-4">
             <p className="text-sm font-semibold text-zinc-100">Belum ada jadwal latihan aktif</p>
             <p className="mt-1 text-xs text-zinc-400">
-              Susun sesi latihan mandiri atau pilih template cepat di tab Program.
+              Susun jadwal mandiri atau gunakan Susun AI di tab Jadwal.
             </p>
           </div>
         )}
@@ -322,9 +335,9 @@ export default function Beranda({ profile, workouts, onNavigate }: BerandaProps)
                   <span className="font-mono text-zinc-300">
                     {dec(item.totalKm, 0)} / {dec(item.shoe.maxKm, 0)} km ({Math.round(item.pct)}%)
                   </span>
-                  <StatusPill tone={item.status === 'replace' ? 'bad' : 'warn'}>
+                  <span className={`text-xs font-bold ${item.status === 'replace' ? 'text-rose-400' : 'text-amber-400'}`}>
                     {item.status === 'replace' ? 'Perlu Ganti' : 'Hampir Aus'}
-                  </StatusPill>
+                  </span>
                 </div>
               </li>
             ))}

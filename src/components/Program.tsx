@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronDown, Pencil, RotateCcw } from 'lucide-react';
-import type { RaceDistance, UserProfile, Workout } from '../analytics/types';
+import { useState } from 'react';
+import { ChevronDown, Pencil } from 'lucide-react';
+import type { UserProfile, Workout } from '../analytics/types';
 import {
   currentVdot,
   predictAll,
@@ -12,18 +12,18 @@ import { resolveMaxHr, zoneRestingHr } from '../plans/hrZones';
 import {
   addCustomSession,
   addDays,
+  deleteSession,
   formatDayMonthYear,
   getMondayIso,
   isoFromRaceTs,
   isValidIso,
   remaining,
-  updateCustomSession,
+  upsertEditedSession,
 } from '../plans/schedule';
 import type { PlanSession, ScheduleState } from '../plans/schedule';
 import { loadScheduleState, saveScheduleState } from '../plans/scheduleStore';
 import {
   categoryToKind,
-  getZoneBpm,
   kindToCategory,
   type SessionCategory,
   type WorkoutBlock,
@@ -34,21 +34,6 @@ import RaceDayCard from './RaceDayCard';
 import TargetRaceModal from './TargetRaceModal';
 import TrainingPlan from './TrainingPlan';
 import WorkoutBuilderModal from './WorkoutBuilderModal';
-
-const SIM_DISTANCES: ReadonlyArray<{ id: RaceDistance; label: string }> = [
-  { id: '5K', label: '5K' },
-  { id: '10K', label: '10K' },
-  { id: '21.1K', label: 'Half Marathon' },
-  { id: '42.2K', label: 'Marathon' },
-];
-
-function defaultSimDateIso(): string {
-  const future = new Date(Date.now() + 14 * DAY_MS);
-  const y = future.getFullYear();
-  const m = String(future.getMonth() + 1).padStart(2, '0');
-  const d = String(future.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
 
 export default function Program({
   profile,
@@ -69,6 +54,8 @@ export default function Program({
   const [builderState, setBuilderState] = useState<{
     mode: 'create' | 'edit';
     session?: PlanSession;
+    baseIdsOnDate?: string[];
+    remainingIfDeleted?: number;
   } | null>(null);
 
   const updateSchedule = (next: ScheduleState) => {
@@ -77,42 +64,19 @@ export default function Program({
   };
 
   const profileRaceIso = profile.targetRaceDate > 0 ? isoFromRaceTs(profile.targetRaceDate) : '';
-  const [simOpen, setSimOpen] = useState(false);
-  const [simDistance, setSimDistance] = useState<RaceDistance>(profile.targetDistance);
-  const [simDateIso, setSimDateIso] = useState<string>(profileRaceIso);
-
-  useEffect(() => {
-    setSimDistance(profile.targetDistance);
-    setSimDateIso(profile.targetRaceDate > 0 ? isoFromRaceTs(profile.targetRaceDate) : '');
-  }, [profile.targetDistance, profile.targetRaceDate]);
-
-  const isSimulated =
-    simDistance !== profile.targetDistance ||
-    simDateIso !== profileRaceIso;
-
-  const effectiveDistance: RaceDistance = simDistance;
-  const validRaceIso = simDateIso && isValidIso(simDateIso) ? simDateIso : null;
+  const validRaceIso = profileRaceIso && isValidIso(profileRaceIso) ? profileRaceIso : null;
   const rem = validRaceIso ? remaining(validRaceIso, todayIso) : null;
   const daysLeft = rem ? rem.daysRemaining : null;
 
   const preds = predictAll(workouts, now);
-  const pred = preds[effectiveDistance];
-  const currentPace = pred ? pred.finalSec / RACE_KM[effectiveDistance] : null;
+  const pred = preds[profile.targetDistance];
+  const currentPace = pred ? pred.finalSec / RACE_KM[profile.targetDistance] : null;
   const last28 = workouts.filter((w) => w.date <= now && now - w.date <= 28 * DAY_MS);
   const weeklyKm = last28.reduce((s, w) => s + w.distanceKm, 0) / 4;
   const vd = currentVdot(workouts, now);
   const easyPace = vd != null ? 60000 / velocityFor(vd, ZONE_FRACTION.easy) : 360;
   const maxHr = resolveMaxHr(profile, workouts) ?? 195;
   const restingHr = zoneRestingHr(profile);
-
-  const hrZoneRefs = useMemo(
-    () =>
-      ([1, 2, 3, 4, 5] as const).map((z) => {
-        const [lo, hi] = getZoneBpm(z, maxHr, restingHr);
-        return { zone: z, label: `Z${z} ${lo}–${hi}` };
-      }),
-    [maxHr, restingHr],
-  );
 
   const handleShiftWeek = (delta: -1 | 1) => {
     setWeekStartIso((prev) => addDays(prev, delta * 7));
@@ -133,17 +97,22 @@ export default function Program({
     const kind = categoryToKind(payload.category);
     if (builderState?.mode === 'edit' && builderState.session) {
       updateSchedule(
-        updateCustomSession(st, builderState.session.id, {
-          date: payload.date,
-          kind,
-          name: payload.title,
-          distanceKm: payload.distanceKm,
-          durationMin: payload.durationMin,
-          hr: payload.hrRange,
-          pace: payload.paceRange,
-          steps: payload.steps,
-          structuredSteps: payload.structuredSteps,
-        }),
+        upsertEditedSession(
+          st,
+          builderState.session,
+          {
+            date: payload.date,
+            kind,
+            name: payload.title,
+            distanceKm: payload.distanceKm,
+            durationMin: payload.durationMin,
+            hr: payload.hrRange,
+            pace: payload.paceRange,
+            steps: payload.steps,
+            structuredSteps: payload.structuredSteps,
+          },
+          builderState.baseIdsOnDate ?? [],
+        ),
       );
     } else {
       updateSchedule(
@@ -163,135 +132,56 @@ export default function Program({
     setBuilderState(null);
   };
 
-  const handleToggleSim = () => {
-    if (!simOpen && !simDateIso) {
-      setSimDateIso(defaultSimDateIso());
-    }
-    setSimOpen((v) => !v);
-  };
-
-  const handleResetSim = () => {
-    setSimDistance(profile.targetDistance);
-    setSimDateIso(profileRaceIso);
-    setSimOpen(false);
+  const handleDeleteFromBuilder = () => {
+    if (builderState?.mode !== 'edit' || !builderState.session) return;
+    const nextState = deleteSession(st, builderState.session.id, {
+      extraDeletedIds: builderState.baseIdsOnDate ?? [],
+      markClearedIfEmpty: (builderState.remainingIfDeleted ?? 0) === 0,
+    });
+    saveScheduleState(nextState);
+    setSt(nextState);
+    setBuilderState(null);
   };
 
   const distanceTitle =
-    effectiveDistance === '21.1K'
-      ? 'Half Marathon'
-      : effectiveDistance === '42.2K'
-        ? 'Marathon'
-        : effectiveDistance;
+    profile.targetDistance === '21.1K'
+      ? 'HM'
+      : profile.targetDistance === '42.2K'
+        ? 'FM'
+        : profile.targetDistance;
 
-  const countdownBadge =
+  const countdownLabel =
     daysLeft == null
-      ? 'Belum diatur'
+      ? ''
       : daysLeft === 0
-        ? 'Hari Ini (H-0)'
+        ? ' (H-0)'
         : daysLeft < 0
-          ? 'Lewat'
-          : `H-${daysLeft} (${daysLeft} hari lagi)`;
+          ? ' (Lewat)'
+          : ` (H-${daysLeft})`;
 
   return (
     <div className="space-y-4">
-      {/* Sticky Header: Target Lomba, Hitung Mundur, & Referensi Zona HR */}
+      {/* Header 1 baris: Target Lomba + tombol Edit */}
       <header
-        aria-label="Target Lomba dan Zona HR"
-        className="sticky top-14 z-20 rounded-2xl border border-white/10 bg-[#121215]/95 px-3.5 py-2.5 shadow-lg backdrop-blur-md"
+        aria-label="Target Lomba"
+        className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#121215] px-4 py-2.5"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-display text-sm font-extrabold tracking-tight text-white sm:text-base">
-                {distanceTitle} · {validRaceIso ? formatDayMonthYear(validRaceIso) : 'Atur Tanggal'}
-              </h1>
-              <span className="rounded-md bg-[#BEF264]/15 px-2 py-0.5 font-mono text-[11px] font-extrabold tabular-nums text-[#BEF264]">
-                {countdownBadge}
-              </span>
-              {isSimulated && (
-                <span className="text-[11px] font-semibold text-sky-400">Simulasi</span>
-              )}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-mono text-[10px] tabular-nums text-zinc-400">
-              <span className="font-semibold text-zinc-300">Zona HR:</span>
-              {hrZoneRefs.map((z) => (
-                <span key={z.zone}>{z.label}</span>
-              ))}
-            </div>
-          </div>
+        <h1 className="min-w-0 truncate font-display text-sm font-extrabold tracking-tight text-white sm:text-base">
+          Target: {distanceTitle} · {validRaceIso ? formatDayMonthYear(validRaceIso) : 'Atur Tanggal'}
+          {countdownLabel && <span className="font-mono text-[#BEF264]">{countdownLabel}</span>}
+        </h1>
 
-          <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setTargetModalOpen(true)}
-              className="inline-flex min-h-[40px] items-center gap-1 whitespace-nowrap rounded-xl border border-[#BEF264]/35 bg-[#BEF264]/10 px-3 text-xs font-bold text-[#BEF264] transition hover:bg-[#BEF264]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-            >
-              <Pencil size={12} aria-hidden />
-              <span>{profile.targetRaceDate > 0 ? 'Ubah Target' : 'Atur Target'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleSim}
-              aria-expanded={simOpen}
-              aria-label="Simulasi jarak dan tanggal lomba"
-              className="inline-flex min-h-[40px] items-center gap-1 whitespace-nowrap rounded-xl border border-white/10 bg-[#18181D] px-2.5 text-xs font-semibold text-zinc-200 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
-            >
-              <CalendarDays size={13} aria-hidden />
-              <span>{simOpen ? 'Tutup' : 'Simulasi'}</span>
-            </button>
-            {isSimulated && (
-              <button
-                type="button"
-                onClick={handleResetSim}
-                aria-label="Reset simulasi"
-                className="inline-flex min-h-[40px] items-center justify-center rounded-xl border border-white/10 bg-[#18181D] px-2.5 text-xs font-semibold text-zinc-300 hover:text-white"
-              >
-                <RotateCcw size={13} aria-hidden />
-              </button>
-            )}
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={() => setTargetModalOpen(true)}
+          className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-white/10 bg-[#18181D] px-3 text-xs font-bold text-[#BEF264] transition hover:border-[#BEF264]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264]"
+        >
+          <Pencil size={12} aria-hidden />
+          <span>Edit</span>
+        </button>
       </header>
 
-      {simOpen && (
-        <section
-          aria-label="Panel Simulasi Target"
-          className="rounded-2xl border border-white/10 bg-[#121215] p-3"
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Simulasi jarak lomba">
-              {SIM_DISTANCES.map((d) => {
-                const active = simDistance === d.id;
-                return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setSimDistance(d.id)}
-                    className={`min-h-[40px] whitespace-nowrap rounded-xl border px-3 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BEF264] ${
-                      active
-                        ? 'border-[#BEF264] bg-[#BEF264] text-[#09090B]'
-                        : 'border-white/10 bg-[#18181D] text-zinc-300 hover:border-white/20 hover:text-white'
-                    }`}
-                  >
-                    {d.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <input
-              type="date"
-              aria-label="Simulasi tanggal lomba"
-              value={simDateIso}
-              onChange={(e) => setSimDateIso(e.target.value)}
-              className="min-h-[40px] rounded-xl border border-white/10 bg-[#18181D] px-3 text-xs font-medium text-zinc-100 tabular-nums focus:border-[#BEF264] focus:outline-none"
-            />
-          </div>
-        </section>
-      )}
-
-      {/* Tampilan Terpadu: WeekStrip + Aksi Mingguan + Kartu Sesi */}
+      {/* WeekStrip + 2 Tombol Aksi + Kartu Sesi Minimalis */}
       <TrainingPlan
         profile={profile}
         workouts={workouts}
@@ -306,7 +196,9 @@ export default function Program({
         onSelectDate={setSelectedDate}
         onScheduleChange={updateSchedule}
         onAddCustomSession={() => setBuilderState({ mode: 'create' })}
-        onEditCustomSession={(session) => setBuilderState({ mode: 'edit', session })}
+        onEditSession={(session, baseIdsOnDate, remainingIfDeleted) =>
+          setBuilderState({ mode: 'edit', session, baseIdsOnDate, remainingIfDeleted })
+        }
       />
 
       {/* Analisa D-Day Lomba (Inline Terpadu) */}
@@ -322,8 +214,8 @@ export default function Program({
           <RaceDayCard
             profile={profile}
             workouts={workouts}
-            simDistance={simDistance}
-            simDateIso={simDateIso}
+            simDistance={profile.targetDistance}
+            simDateIso={profileRaceIso}
             hideTargetControls
           />
         </div>
@@ -347,6 +239,10 @@ export default function Program({
                   date: builderState.session.date,
                   category: kindToCategory(builderState.session.kind),
                   title: builderState.session.name,
+                  durationMin: builderState.session.adjDurationMin ?? builderState.session.durationMin,
+                  distanceKm: builderState.session.distanceKm,
+                  hr: builderState.session.hr,
+                  pace: builderState.session.pace,
                   structuredSteps: builderState.session.structuredSteps,
                 }
               : undefined
@@ -354,6 +250,7 @@ export default function Program({
           maxHr={maxHr}
           restingHr={restingHr}
           onClose={() => setBuilderState(null)}
+          onDelete={builderState.mode === 'edit' ? handleDeleteFromBuilder : undefined}
           onSave={handleSaveBuilder}
         />
       )}

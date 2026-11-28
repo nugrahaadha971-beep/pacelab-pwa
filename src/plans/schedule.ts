@@ -444,6 +444,64 @@ export function deleteCustomSession(state: ScheduleState, id: string): ScheduleS
   };
 }
 
+/** Simpan hasil edit untuk sesi apa pun (kustom, AI, atau bawaan) tanpa memunculkan duplikat bawaan. */
+export function upsertEditedSession(
+  state: ScheduleState,
+  original: Pick<PlanSession, 'id' | 'date'>,
+  input: CustomSessionInput,
+  extraSuppressedIds: string[] = [],
+): ScheduleState {
+  const existingCustom = state.customSessions ?? [];
+  if (existingCustom.some((s) => s.id === original.id)) {
+    return updateCustomSession({ ...state, initialized: true }, original.id, input);
+  }
+
+  const existingAi = state.aiSessions ?? [];
+  const wasAi = existingAi.some((s) => s.id === original.id);
+  const nextAi = existingAi.filter((s) => s.id !== original.id);
+
+  const overrides = { ...state.overrides };
+  delete overrides[original.id];
+
+  const done = { ...state.done };
+  const wasDone = Boolean(done[original.id]);
+  delete done[original.id];
+
+  const deletedSet = new Set(state.deletedIds ?? []);
+  if (!wasAi) {
+    deletedSet.add(original.id);
+  }
+  for (const extra of extraSuppressedIds) {
+    if (extra.trim()) deletedSet.add(extra.trim());
+  }
+  const deletedIds = [...deletedSet];
+
+  const nextId = wasAi
+    ? original.id
+    : `custom-${input.date}-${Date.now().toString(36)}-${existingCustom.length}`;
+  if (wasDone) done[nextId] = true;
+
+  const updatedRecord = buildCustomSessionRecord({ ...input, id: nextId }, nextId);
+  const customSessions = [...existingCustom, updatedRecord].sort(
+    (a, b) => dayNum(a.date) - dayNum(b.date),
+  );
+
+  const { aiSessions: _oldAi, aiSummary: _oldSummary, deletedIds: _oldDel, ...rest } = state;
+  const keepSummary = nextAi.length > 0 ? state.aiSummary : undefined;
+
+  return {
+    ...rest,
+    initialized: true,
+    overrides,
+    done,
+    customSessions,
+    ...(nextAi.length > 0 ? { aiSessions: nextAi } : {}),
+    ...(keepSummary ? { aiSummary: keepSummary } : {}),
+    ...(deletedIds.length > 0 ? { deletedIds } : {}),
+    ...(state.programTitle ? {} : { programTitle: 'Program Latihan Saya' }),
+  };
+}
+
 /** Hapus satu sesi (kustom, AI, atau bawaan) berdasarkan id; opsional menandai jadwal kosong oleh pengguna. */
 export function deleteSession(
   state: ScheduleState,

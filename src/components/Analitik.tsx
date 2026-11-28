@@ -73,7 +73,15 @@ function EmptyChart({ message }: { message: string }) {
   );
 }
 
-export default function Analitik({ profile, workouts }: { profile: UserProfile; workouts: Workout[] }) {
+export default function Analitik({
+  profile,
+  workouts,
+  embedded = false,
+}: {
+  profile: UserProfile;
+  workouts: Workout[];
+  embedded?: boolean;
+}) {
   const [days, setDays] = useState<Range>(28);
   const [trendKind, setTrendKind] = useState<TrendKind>('ef');
 
@@ -120,8 +128,8 @@ export default function Analitik({ profile, workouts }: { profile: UserProfile; 
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <ScreenHeader title="Analitik" subtitle="Tren performa & beban latihan" />
+      <div className={`flex flex-col gap-3 sm:flex-row sm:items-end ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}>
+        {!embedded && <ScreenHeader title="Analitik" subtitle="Tren performa & beban latihan" />}
 
         <div role="group" aria-label="Rentang waktu" className="grid grid-cols-3 gap-1 rounded-2xl border border-white/10 bg-[#121215] p-1">
           {RANGES.map((r) => (

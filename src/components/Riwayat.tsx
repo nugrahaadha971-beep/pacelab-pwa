@@ -93,7 +93,17 @@ function buildAnalysisContext(profile: UserProfile, workouts: Workout[]) {
   };
 }
 
-export default function Riwayat({ profile, workouts, reload }: { profile: UserProfile; workouts: Workout[]; reload: () => void }) {
+export default function Riwayat({
+  profile,
+  workouts,
+  reload,
+  embedded = false,
+}: {
+  profile: UserProfile;
+  workouts: Workout[];
+  reload: () => void;
+  embedded?: boolean;
+}) {
   const [q, setQ] = useState('');
   const [f, setF] = useState<Filters>(NO_FILTER);
   const [panel, setPanel] = useState(false);
@@ -119,7 +129,7 @@ export default function Riwayat({ profile, workouts, reload }: { profile: UserPr
 
   return (
     <div className="space-y-4">
-      <ScreenHeader title="Riwayat" subtitle="Ketuk sesi untuk melihat detail analisis" />
+      {!embedded && <ScreenHeader title="Riwayat" subtitle="Ketuk sesi untuk melihat detail analisis" />}
 
       <div className="flex gap-2">
         <label className="relative block flex-1">
@@ -175,7 +185,7 @@ export default function Riwayat({ profile, workouts, reload }: { profile: UserPr
 
       {sorted.length === 0 && (
         <p className="sport-card p-5 text-sm text-zinc-300">
-          Belum ada sesi tercatat. Ketuk tombol <strong className="text-[#BEF264]">+</strong> untuk mencatat sesi pertama.
+          Belum ada sesi tercatat. Catat lari atau unggah file <strong className="text-[#BEF264]">.FIT</strong> dari tab <strong className="text-white">Hari Ini</strong>.
         </p>
       )}
       {sorted.length > 0 && (
