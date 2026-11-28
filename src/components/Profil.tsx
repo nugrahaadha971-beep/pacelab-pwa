@@ -544,7 +544,7 @@ export default function Profil({ profile, workouts = [], onSaved }: { profile: U
       )}
       {askWipe && (
         <ConfirmDialog id="hapus-semua" title="Hapus semua data?" confirmLabel="Hapus semua" onConfirm={wipe} onCancel={() => setAskWipe(false)}>
-          <p>Semua sesi, profil, jadwal, data sepatu, dan API key Gemini di perangkat ini akan dihapus permanen.</p>
+          <p>Semua sesi, profil, jadwal, data sepatu, serta API key Gemini dan hasil analisis AI di perangkat ini akan dihapus permanen.</p>
         </ConfirmDialog>
       )}
     </div>

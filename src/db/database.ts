@@ -1,7 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { UserProfile, Workout } from '../analytics/types';
 import { mergeWorkouts, parseBackup, PREF_KEYS } from './validate';
-import { ALL_LOCAL_KEYS } from './localKeys';
+import { wipeLocalKeys } from './localKeys';
 import { loadScheduleState, saveScheduleState } from '../plans/scheduleStore.ts';
 
 class PacelabDB extends Dexie {
@@ -114,11 +114,9 @@ export async function clearAll(): Promise<void> {
     await db.workouts.clear();
     await db.userProfile.clear();
   });
-  for (const k of ALL_LOCAL_KEYS) {
-    try {
-      localStorage.removeItem(k);
-    } catch {
-      /* abaikan */
-    }
+  try {
+    wipeLocalKeys(localStorage);
+  } catch {
+    /* localStorage tidak tersedia */
   }
 }

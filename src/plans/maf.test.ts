@@ -382,3 +382,21 @@ test('mafRaceOutlook catatan sisa minggu: null / terlewat / singkat / awal / pen
   assert.ok(note(8)?.includes('8 minggu') && note(8)?.includes('tanda awal'));
   assert.ok(note(16)?.includes('16 minggu') && note(16)?.includes('adaptasi aerobik penuh'));
 });
+
+test('latestMafPaceSec: pace sesi zona-MAF terbaru; null bila tidak ada; mengabaikan sesi setelah now', async () => {
+  const { latestMafPaceSec } = await import('./maf.ts');
+  const maf = mafHr(34, 0) as number; // 180 − 34 = 146
+  const w = (daysAgo: number, avgHr: number, pace: number, type = 'easy') => ({
+    id: daysAgo, date: Date.UTC(2026, 10, 22) - daysAgo * DAY_MS, source: 'manual', workoutType: type,
+    distanceKm: 5, durationSec: pace * 5, avgPaceSecPerKm: pace, avgHr, maxHr: 170, avgCadence: null,
+    elevationGain: 0, rpe: 4, laps: [],
+  }) as never;
+  const now = Date.UTC(2026, 10, 22, 12);
+  const ws = [w(20, maf - 2, 420), w(10, maf - 1, 405), w(3, maf + 25, 330), w(1, maf - 3, 400, 'race')];
+  assert.equal(latestMafPaceSec(ws, 34, 0, now), 405, 'sesi HR jauh di atas MAF dan race tidak dihitung');
+  assert.equal(latestMafPaceSec([w(3, maf + 25, 330)], 34, 0, now), null);
+  assert.equal(latestMafPaceSec([], 34, 0, now), null);
+  assert.equal(latestMafPaceSec(ws, null, 0, now), null, 'usia tidak diketahui');
+  assert.equal(latestMafPaceSec(ws, 34, 0, Date.UTC(2026, 10, 5)), 420, 'sesi setelah now diabaikan');
+});
+

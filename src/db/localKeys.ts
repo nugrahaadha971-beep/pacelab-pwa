@@ -21,3 +21,17 @@ export const ALL_LOCAL_KEYS: readonly string[] = [
   GEMINI_MODEL_STORAGE_KEY,
   AI_COACH_CACHE_STORAGE_KEY,
 ];
+
+/** Menghapus seluruh kunci PACELAB dari Storage, mengembalikan jumlah kunci yang gagal dihapus. */
+export function wipeLocalKeys(storage: Pick<Storage, 'removeItem'>): number {
+  let failed = 0;
+  for (const k of ALL_LOCAL_KEYS) {
+    try {
+      storage.removeItem(k);
+    } catch {
+      failed += 1;
+    }
+  }
+  return failed;
+}
+

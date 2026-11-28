@@ -86,6 +86,18 @@ export function mafTests(workouts: Workout[], maf: number | null): MafPoint[] {
     }));
 }
 
+/** Pace (dtk/km) catatan di zona MAF yang paling baru; null bila belum ada. Dipakai konteks Pelatih AI. */
+export function latestMafPaceSec(
+  workouts: Workout[],
+  age: number | null | undefined,
+  adj: MafAdjustment = 0,
+  now?: number,
+): number | null {
+  const pool = now == null ? workouts : workouts.filter((w) => w.date <= now);
+  const pts = mafTests(pool, mafHr(age, adj));
+  return pts.length > 0 ? pts[pts.length - 1].paceSecPerKm : null;
+}
+
 /**
  * firstPace / lastPace adalah rata-rata `window` sampel pertama / terakhir (window = 1 bila hanya 2–3 catatan,
  * sehingga itu sama dengan pace pertama dan terakhir).

@@ -469,7 +469,7 @@ export async function requestRaceDayAnalysis(
   }
 
   const fetchFn = opts.fetchImpl ?? fetch;
-  const timeoutMs = opts.timeoutMs ?? 12_000;
+  const timeoutMs = opts.timeoutMs ?? 45_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 

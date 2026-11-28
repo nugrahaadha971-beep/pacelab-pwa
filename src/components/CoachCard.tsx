@@ -12,7 +12,8 @@ import {
   requestAiCoachAnalysis,
 } from '../analytics/aiCoach';
 import { fmtPace } from '../plans/pace';
-import { loadScheduleState } from '../plans/scheduleStore';
+import { loadMafAdj, loadScheduleState } from '../plans/scheduleStore';
+import { latestMafPaceSec } from '../plans/maf';
 import { stripMarkdown } from '../analytics/raceDayAnalyzer';
 import AiLoader from './AiLoader';
 import { Button, StatusPill, type Tone } from './ui';
@@ -209,6 +210,19 @@ export default function CoachCard({
   const last = [...workouts].sort((a, b) => b.date - a.date)[0];
   const drift = last ? cardiacDrift(last.laps) : null;
   const scheduleState = loadScheduleState();
+  // Pace MAF terbaru sebenarnya dari riwayat (sebelumnya selalu null → AI mengira belum ada catatan MAF).
+  const mafPace = latestMafPaceSec(workouts, profile.age, loadMafAdj(), t);
+  // Konteks yang sama dipakai untuk baca cache dan permintaan AI, supaya kunci cache konsisten.
+  const aiCtx = {
+    profile,
+    curriculum: 'custom' as const,
+    programTitle: scheduleState.programTitle,
+    acwr: load,
+    efTrend: ef,
+    latestMafPaceSec: mafPace,
+    workouts,
+    now: t,
+  };
   const advice = coachAdvice({
     acwrStatus: load.status,
     acwrRatio: load.ratio,
@@ -226,14 +240,7 @@ export default function CoachCard({
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<string | null>(() =>
-    loadCachedAiCoachAnalysis({
-      profile,
-      curriculum: 'custom',
-      programTitle: scheduleState.programTitle,
-      workouts,
-      acwr: load,
-      now: t,
-    }),
+    loadCachedAiCoachAnalysis(aiCtx),
   );
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -253,16 +260,9 @@ export default function CoachCard({
   }, []);
 
   useEffect(() => {
-    const cached = loadCachedAiCoachAnalysis({
-      profile,
-      curriculum: 'custom',
-      programTitle: scheduleState.programTitle,
-      workouts,
-      acwr: load,
-      now: t,
-    });
+    const cached = loadCachedAiCoachAnalysis(aiCtx);
     setAiResult(cached);
-  }, [workouts, load.ratio, load.status, profile, scheduleState.programTitle]);
+  }, [workouts, load.ratio, load.status, profile.age, profile.targetDistance, profile.targetRaceDate, scheduleState.programTitle, mafPace]);
 
   const canAnalyzeAi = hasApiKey && isOnline && !aiLoading;
 
@@ -272,19 +272,7 @@ export default function CoachCard({
     setAiLoading(true);
     setAiError(null);
     try {
-      const text = await requestAiCoachAnalysis(
-        {
-          profile,
-          curriculum: 'custom',
-          programTitle: scheduleState.programTitle,
-          acwr: load,
-          efTrend: ef,
-          latestMafPaceSec: null,
-          workouts,
-          now: t,
-        },
-        { apiKey: key, isOnline: navigator.onLine, forceRefresh },
-      );
+      const text = await requestAiCoachAnalysis(aiCtx, { apiKey: key, isOnline: navigator.onLine, forceRefresh });
       setAiResult(text);
     } catch (err) {
       setAiError(err instanceof Error ? err.message : 'Gagal meminta saran Pelatih AI.');

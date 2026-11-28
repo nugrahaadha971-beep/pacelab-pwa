@@ -27,8 +27,11 @@ export const DEFAULT_GEMINI_MODEL = GEMINI_MODEL_PRIORITY[0];
 export const FALLBACK_GEMINI_MODEL = GEMINI_MODEL_PRIORITY[1];
 export const GEMINI_ENDPOINT = `${GEMINI_API_BASE}/${DEFAULT_GEMINI_MODEL}:generateContent`;
 export const REQUEST_TIMEOUT_MS = 30_000;
-const TOTAL_BUDGET_MS = 75_000;
-const secText = (ms: number) => `${Math.round(ms / 1000)} detik`;
+/** Batas total seluruh percobaan model + daftar model, agar fallback tidak berjalan berpuluh detik. */
+export const TOTAL_BUDGET_MS = 75_000;
+const secText = (ms: number) => (ms >= 1000 ? `${Math.round(ms / 1000)} detik` : `${ms} ms`);
+const timeoutMessage = (ms: number) =>
+  `Permintaan ke Gemini melewati batas waktu ${secText(ms)}. Silakan coba lagi.`;
 const ALL_429_MESSAGE =
   'Kuota gratis harian semua model Gemini untuk API key ini sedang habis. Coba lagi dalam beberapa jam atau ganti API key dari project Google Cloud lain di tab Profil.';
 
@@ -252,6 +255,8 @@ export interface RequestAiCoachOptions {
   isOnline?: boolean;
   retryDelayMs?: number;
   timeoutMs?: number;
+  /** Batas total semua percobaan model (default TOTAL_BUDGET_MS). */
+  totalBudgetMs?: number;
   forceRefresh?: boolean;
 }
 
@@ -393,10 +398,7 @@ async function callGenerateContent(
     });
   } catch (err) {
     if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
-      throw new AiCoachError(
-        'timeout',
-        `Permintaan ke Gemini melewati batas waktu ${secText(timeoutMs)}. Silakan coba lagi.`,
-      );
+      throw new AiCoachError('timeout', timeoutMessage(timeoutMs));
     }
     throw new AiCoachError(
       'network',
@@ -422,10 +424,11 @@ function fnv1aHash(input: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-type CacheCtx = Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'> &
-  Partial<Pick<AiCoachContext, 'profile' | 'curriculum' | 'programTitle'>>;
+/** Konteks minimal untuk kunci cache. profile/curriculum/programTitle/latestMafPaceSec opsional agar pemanggil lama tetap valid. */
+export type AiCoachCacheCtx = Pick<AiCoachContext, 'workouts' | 'acwr' | 'now'> &
+  Partial<Pick<AiCoachContext, 'profile' | 'curriculum' | 'programTitle' | 'latestMafPaceSec'>>;
 
-export function buildAiCoachCacheHash(ctx: CacheCtx): string {
+export function buildAiCoachCacheHash(ctx: AiCoachCacheCtx): string {
   const cutoff = ctx.now;
   const relevant = cutoff == null ? ctx.workouts : ctx.workouts.filter((w) => w.date <= cutoff);
   const latestDate = relevant.reduce((max, w) => (w.date > max ? w.date : max), 0);
@@ -447,12 +450,13 @@ export function buildAiCoachCacheHash(ctx: CacheCtx): string {
       p?.targetRaceDate,
       ctx.curriculum,
       ctx.programTitle,
+      ctx.latestMafPaceSec != null ? Math.round(ctx.latestMafPaceSec) : '',
       sig,
     ].join('|'),
   );
 }
 
-export function loadCachedAiCoachAnalysis(ctx: CacheCtx): string | null {
+export function loadCachedAiCoachAnalysis(ctx: AiCoachCacheCtx): string | null {
   try {
     const raw = localStorage.getItem(AI_COACH_CACHE_STORAGE_KEY);
     if (!raw) return null;
@@ -472,7 +476,7 @@ export function loadCachedAiCoachAnalysis(ctx: CacheCtx): string | null {
 }
 
 export function saveCachedAiCoachAnalysis(
-  ctx: CacheCtx,
+  ctx: AiCoachCacheCtx,
   text: string,
 ): void {
   const trimmed = text.trim();
@@ -528,7 +532,7 @@ async function callGeminiText(
   const attemptStatuses: number[] = [];
   let stopEarly = false;
 
-  const deadline = Date.now() + TOTAL_BUDGET_MS;
+  const deadline = Date.now() + (opts.totalBudgetMs ?? TOTAL_BUDGET_MS);
 
   const tryCandidates = async (models: readonly string[]) => {
     for (const rawModel of models) {
@@ -577,7 +581,7 @@ async function callGeminiText(
   if (!res) {
     throw (
       lastTimeoutErr ??
-      new AiCoachError('timeout', `Permintaan ke Gemini melewati batas waktu ${secText(timeoutMs)}. Silakan coba lagi.`)
+      new AiCoachError('timeout', timeoutMessage(timeoutMs))
     );
   }
 

@@ -533,4 +533,44 @@ test('buildAiCoachCacheHash berubah bila RPE, jenis sesi, profil, atau judul pro
   assert.notEqual(h0, hProg);
 });
 
+test('cache hash: berubah bila profil, jenis/RPE sesi, program, atau pace MAF berubah; stabil bila sama', async () => {
+  const { buildAiCoachCacheHash: hashFn } = await import('./aiCoach.ts');
+  const c = baseContext();
+  const h0 = hashFn(c);
+  assert.equal(hashFn(baseContext()), h0, 'deterministik');
+  const editWorkout = (patch: Partial<Workout>) => ({
+    ...c, workouts: c.workouts.map((w, i) => (i === 3 ? { ...w, ...patch } : w)),
+  });
+  assert.notEqual(hashFn(editWorkout({ workoutType: 'race' })), h0, 'jenis sesi lama diubah');
+  assert.notEqual(hashFn(editWorkout({ rpe: 9 })), h0, 'RPE sesi lama diubah');
+  assert.notEqual(hashFn({ ...c, profile: { ...c.profile, targetDistance: '21.1K' } }), h0, 'target jarak');
+  assert.notEqual(hashFn({ ...c, profile: { ...c.profile, targetRaceDate: 0 } }), h0, 'tanggal lomba');
+  assert.notEqual(hashFn({ ...c, programTitle: 'Program Baru' }), h0, 'nama program');
+  assert.notEqual(hashFn({ ...c, latestMafPaceSec: 395 }), h0, 'pace MAF');
+  const { profile: _p, curriculum: _c, latestMafPaceSec: _m, ...minimal } = c;
+  assert.equal(typeof hashFn(minimal), 'string');
+});
+
+test('timeout: pesan memakai batas sebenarnya, dan total percobaan dibatasi anggaran waktu', async () => {
+  const { GEMINI_MODEL_PRIORITY, REQUEST_TIMEOUT_MS, TOTAL_BUDGET_MS } = await import('./aiCoach.ts');
+  assert.equal(REQUEST_TIMEOUT_MS, 30_000);
+  assert.equal(TOTAL_BUDGET_MS, 75_000);
+
+  let calls = 0;
+  const hangFetch = ((_url: string | URL | Request, init?: RequestInit) => {
+    calls += 1;
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    () => requestAiCoachAnalysis(baseContext(), { apiKey: 'AIzaDemo', isOnline: true, fetchImpl: hangFetch, timeoutMs: 30, totalBudgetMs: 40, forceRefresh: true }),
+    (err: unknown) => err instanceof AiCoachError && err.code === 'timeout' && /30 ms/.test(err.message),
+  );
+  assert.ok(calls < GEMINI_MODEL_PRIORITY.length, `percobaan dibatasi anggaran (calls=${calls})`);
+  assert.ok(calls >= 1);
+});
+
+
 
