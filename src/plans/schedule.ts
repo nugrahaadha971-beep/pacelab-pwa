@@ -114,6 +114,12 @@ export interface ScheduleState {
   programTitle?: string;
   /** Jika true, kalender hanya menampilkan sesi kustom/AI (+ hari lomba) tanpa sesi kurikulum bawaan. */
   customOnly?: boolean;
+  /** Menandai jadwal sudah pernah diinisialisasi/disimpan pengguna. */
+  initialized?: boolean;
+  /** Menandai pengguna sengaja mengosongkan jadwal agar tidak digenerate ulang ke default. */
+  clearedByUser?: boolean;
+  /** Daftar id sesi bawaan yang dihapus secara individual oleh pengguna. */
+  deletedIds?: string[];
   /** Sesi latihan terstruktur hasil penyusunan Gemini AI. */
   aiSessions?: PlanSession[];
   /** Ringkasan analisis program hasil Gemini AI. */
@@ -236,10 +242,17 @@ export function normalizeScheduleState(raw: unknown): ScheduleState | null {
     : [];
   const aiSummary = typeof r.aiSummary === 'string' && r.aiSummary.trim() ? r.aiSummary.trim() : '';
 
+  const deletedIds = Array.isArray(r.deletedIds)
+    ? [...new Set(r.deletedIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim()))]
+    : [];
+
   const out: ScheduleState = { days: days.length ? days : [...DEFAULT_SCHEDULE_STATE.days], shift, overrides, done };
   if (customSessions.length > 0) out.customSessions = customSessions;
   if (programTitle) out.programTitle = programTitle;
   if (r.customOnly === true) out.customOnly = true;
+  if (r.initialized === true) out.initialized = true;
+  if (r.clearedByUser === true) out.clearedByUser = true;
+  if (deletedIds.length > 0) out.deletedIds = deletedIds;
   if (aiSessions.length > 0) out.aiSessions = aiSessions;
   if (aiSummary) out.aiSummary = aiSummary;
   return out;
@@ -254,7 +267,14 @@ export function toggleDay(state: ScheduleState, day: number): ScheduleState {
 export const shiftAll = (state: ScheduleState, delta: number): ScheduleState =>
   ({ ...state, shift: Math.max(-SHIFT_LIMIT, Math.min(SHIFT_LIMIT, state.shift + delta)) });
 export function resetSchedule(state: ScheduleState): ScheduleState {
-  const { aiSessions: _aiSessions, aiSummary: _aiSummary, ...rest } = state;
+  const {
+    aiSessions: _aiSessions,
+    aiSummary: _aiSummary,
+    clearedByUser: _clearedByUser,
+    customOnly: _customOnly,
+    deletedIds: _deletedIds,
+    ...rest
+  } = state;
   return { ...rest, shift: 0, overrides: {} };
 }
 export function clearAiSchedule(state: ScheduleState): ScheduleState {
@@ -421,6 +441,114 @@ export function deleteCustomSession(state: ScheduleState, id: string): ScheduleS
     overrides,
     done,
     ...(nextList.length > 0 ? { customSessions: nextList } : {}),
+  };
+}
+
+/** Hapus satu sesi (kustom, AI, atau bawaan) berdasarkan id; opsional menandai jadwal kosong oleh pengguna. */
+export function deleteSession(
+  state: ScheduleState,
+  targetId: string,
+  opts?: { extraDeletedIds?: string[]; markClearedIfEmpty?: boolean },
+): ScheduleState {
+  const existingCustom = state.customSessions ?? [];
+  const existingAi = state.aiSessions ?? [];
+  const wasCustom = existingCustom.some((s) => s.id === targetId);
+  const wasAi = existingAi.some((s) => s.id === targetId);
+
+  const nextCustom = existingCustom.filter((s) => s.id !== targetId);
+  const nextAi = existingAi.filter((s) => s.id !== targetId);
+
+  const overrides = { ...state.overrides };
+  delete overrides[targetId];
+  const done = { ...state.done };
+  delete done[targetId];
+
+  const deletedSet = new Set(state.deletedIds ?? []);
+  if (!wasCustom && !wasAi) deletedSet.add(targetId);
+  for (const extra of opts?.extraDeletedIds ?? []) {
+    if (extra.trim()) deletedSet.add(extra.trim());
+  }
+  const deletedIds = [...deletedSet];
+
+  const { customSessions: _oldC, aiSessions: _oldA, aiSummary: _oldS, deletedIds: _oldD, ...rest } = state;
+  const keepSummary = nextAi.length > 0 ? state.aiSummary : undefined;
+
+  return {
+    ...rest,
+    initialized: true,
+    ...(opts?.markClearedIfEmpty ? { clearedByUser: true } : {}),
+    overrides,
+    done,
+    ...(nextCustom.length > 0 ? { customSessions: nextCustom } : {}),
+    ...(nextAi.length > 0 ? { aiSessions: nextAi } : {}),
+    ...(keepSummary ? { aiSummary: keepSummary } : {}),
+    ...(deletedIds.length > 0 ? { deletedIds } : {}),
+  };
+}
+
+/** Hapus semua sesi pada tanggal lokal tertentu (`YYYY-MM-DD`). */
+export function deleteSessionsOnDate(
+  state: ScheduleState,
+  dateIso: IsoDate,
+  baseIdsOnDate: string[] = [],
+  markClearedIfEmpty = false,
+): ScheduleState {
+  const effDate = (s: PlanSession) => state.overrides[s.id] ?? s.date;
+  const existingCustom = state.customSessions ?? [];
+  const existingAi = state.aiSessions ?? [];
+
+  const removedIds = new Set<string>(baseIdsOnDate);
+  for (const s of existingCustom) if (effDate(s) === dateIso) removedIds.add(s.id);
+  for (const s of existingAi) if (effDate(s) === dateIso) removedIds.add(s.id);
+
+  const nextCustom = existingCustom.filter((s) => effDate(s) !== dateIso);
+  const nextAi = existingAi.filter((s) => effDate(s) !== dateIso);
+
+  const overrides = { ...state.overrides };
+  const done = { ...state.done };
+  for (const id of removedIds) {
+    delete overrides[id];
+    delete done[id];
+  }
+
+  const deletedSet = new Set(state.deletedIds ?? []);
+  for (const id of baseIdsOnDate) {
+    if (id.trim()) deletedSet.add(id.trim());
+  }
+  const deletedIds = [...deletedSet];
+
+  const { customSessions: _oldC, aiSessions: _oldA, aiSummary: _oldS, deletedIds: _oldD, ...rest } = state;
+  const keepSummary = nextAi.length > 0 ? state.aiSummary : undefined;
+
+  return {
+    ...rest,
+    initialized: true,
+    ...(markClearedIfEmpty ? { clearedByUser: true } : {}),
+    overrides,
+    done,
+    ...(nextCustom.length > 0 ? { customSessions: nextCustom } : {}),
+    ...(nextAi.length > 0 ? { aiSessions: nextAi } : {}),
+    ...(keepSummary ? { aiSummary: keepSummary } : {}),
+    ...(deletedIds.length > 0 ? { deletedIds } : {}),
+  };
+}
+
+/** Kosongkan seluruh sesi jadwal secara eksplisit oleh pengguna. */
+export function clearAllSessions(state: ScheduleState): ScheduleState {
+  const {
+    customSessions: _oldC,
+    aiSessions: _oldA,
+    aiSummary: _oldS,
+    deletedIds: _oldD,
+    ...rest
+  } = state;
+  return {
+    ...rest,
+    initialized: true,
+    clearedByUser: true,
+    customOnly: true,
+    overrides: {},
+    done: {},
   };
 }
 
@@ -876,16 +1004,21 @@ export function buildPlan(o: PlanOptions): Plan {
 /** Terapkan geser global, tanggal manual, serta prioritaskan sesi kustom dan sesi AI di atas jadwal kalender dasar. */
 export function applyScheduleState(plan: Plan, state: ScheduleState, raceIso: IsoDate): Plan {
   const lastAllowed = addDays(raceIso, -1);
+  const deletedSet = new Set(state.deletedIds ?? []);
   let weeks: PlanWeek[] = plan.weeks.map((w) => ({
     ...w,
-    sessions: state.customOnly
-      ? w.sessions.filter((s) => s.kind === 'race')
-      : w.sessions.map((s) => {
-          if (s.kind === 'race') return s;
-          let date = state.overrides[s.id] ?? addDays(s.baseDate, state.shift);
-          if (dayNum(date) > dayNum(lastAllowed)) date = lastAllowed;
-          return { ...s, date };
-        }),
+    sessions: state.clearedByUser
+      ? []
+      : state.customOnly
+        ? w.sessions.filter((s) => s.kind === 'race' && !deletedSet.has(s.id))
+        : w.sessions
+            .filter((s) => !deletedSet.has(s.id))
+            .map((s) => {
+              if (s.kind === 'race') return s;
+              let date = state.overrides[s.id] ?? addDays(s.baseDate, state.shift);
+              if (dayNum(date) > dayNum(lastAllowed)) date = lastAllowed;
+              return { ...s, date };
+            }),
   }));
 
   const insertOverlay = (overlay: PlanSession[], replaceRaceOnMatch: boolean) => {

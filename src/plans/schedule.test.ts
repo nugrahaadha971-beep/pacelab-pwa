@@ -694,6 +694,80 @@ test('workoutTypes: Karvonen getZoneBpm, summarizeWorkout, WORKOUT_PRESETS, norm
   );
 });
 
+test('Schedule persistence: setelah semua sesi dihapus (sessions = []), loadScheduleState() tetap kosong dan tidak kembali ke default', async () => {
+  const {
+    addCustomSessionState,
+    clearAllSessionsState,
+    deleteSessionState,
+    deleteSessionsOnDateState,
+    loadScheduleState,
+    resetScheduleState,
+  } = await import('./scheduleStore.ts');
+  const { applyScheduleState, buildPlan, flattenPlan } = await import('./schedule.ts');
+
+  const store = new Map<string, string>();
+  const prevStorage = (globalThis as { localStorage?: Storage }).localStorage;
+  (globalThis as { localStorage: Storage }).localStorage = {
+    get length() { return store.size; },
+    clear() { store.clear(); },
+    key(i: number) { return [...store.keys()][i] ?? null; },
+    getItem(k: string) { return store.get(k) ?? null; },
+    setItem(k: string, v: string) { store.set(k, v); },
+    removeItem(k: string) { store.delete(k); },
+  };
+
+  try {
+    const basePlan = buildPlan(opts({ raceIso: '2026-12-20', curriculum: 'custom' }));
+
+    // 1. Kondisi belum pernah inisialisasi
+    const fresh = loadScheduleState();
+    assert.equal(fresh.initialized, false);
+    assert.equal(fresh.clearedByUser, undefined);
+
+    // 2. Tambah sesi kustom lalu hapus seluruh sesi hingga kosong
+    let st = addCustomSessionState(fresh, {
+      date: '2026-11-18',
+      kind: 'recovery',
+      name: 'Easy Run Uji',
+      durationMin: 30,
+    });
+    const createdId = st.customSessions![0].id;
+    st = deleteSessionState(st, createdId, { markClearedIfEmpty: true });
+
+    const reloaded = loadScheduleState();
+    assert.equal(reloaded.initialized, true);
+    assert.equal(reloaded.clearedByUser, true);
+    assert.deepEqual(reloaded.customSessions ?? [], []);
+    assert.deepEqual(reloaded.aiSessions ?? [], []);
+
+    const appliedEmpty = applyScheduleState(basePlan, reloaded, '2026-12-20');
+    assert.deepEqual(flattenPlan(appliedEmpty), []);
+
+    // 3. Hapus berdasarkan tanggal lokal YYYY-MM-DD dan clearAllSessionsState
+    const addedTwo = addCustomSessionState(
+      addCustomSessionState(reloaded, { date: '2026-11-19', kind: 'recovery', name: 'Sesi 1', durationMin: 25 }),
+      { date: '2026-11-20', kind: 'speed', name: 'Sesi 2', durationMin: 35 },
+    );
+    const afterDateDel = deleteSessionsOnDateState(addedTwo, '2026-11-19', [], false);
+    assert.equal(afterDateDel.customSessions?.length, 1);
+    assert.equal(afterDateDel.customSessions?.[0].date, '2026-11-20');
+
+    clearAllSessionsState(afterDateDel);
+    const afterClear = loadScheduleState();
+    assert.equal(afterClear.clearedByUser, true);
+    assert.deepEqual(flattenPlan(applyScheduleState(basePlan, afterClear, '2026-12-20')), []);
+
+    // 4. Reset ke Default mengembalikan jadwal bawaan secara eksplisit
+    const afterReset = resetScheduleState(afterClear);
+    assert.equal(afterReset.clearedByUser, undefined);
+    assert.ok(flattenPlan(applyScheduleState(basePlan, afterReset, '2026-12-20')).length > 0);
+  } finally {
+    if (prevStorage === undefined) delete (globalThis as { localStorage?: Storage }).localStorage;
+    else (globalThis as { localStorage: Storage }).localStorage = prevStorage;
+  }
+});
+
+
 
 
 

@@ -2,14 +2,19 @@ import {
   addCustomSession,
   applyPresetTemplate,
   clearAiSchedule,
+  clearAllSessions,
   DEFAULT_SCHEDULE_STATE,
   deleteCustomSession,
+  deleteSession,
+  deleteSessionsOnDate,
   normalizeScheduleState,
+  resetSchedule,
   setProgramTitle,
   updateCustomSession,
 } from './schedule.ts';
 import type {
   CustomSessionInput,
+  IsoDate,
   PlanSession,
   PresetTemplateId,
   PresetTemplateOptions,
@@ -25,15 +30,35 @@ export const SCHEDULE_KEY = 'pacelab.schedule';
 export function loadScheduleState(): ScheduleState {
   try {
     const raw = localStorage.getItem(SCHEDULE_KEY);
-    return (raw && normalizeScheduleState(JSON.parse(raw))) || { ...DEFAULT_SCHEDULE_STATE, days: [...DEFAULT_SCHEDULE_STATE.days] };
+    if (!raw) {
+      return {
+        ...DEFAULT_SCHEDULE_STATE,
+        days: [...DEFAULT_SCHEDULE_STATE.days],
+        initialized: false,
+      };
+    }
+    const parsed = normalizeScheduleState(JSON.parse(raw));
+    if (!parsed) {
+      return {
+        ...DEFAULT_SCHEDULE_STATE,
+        days: [...DEFAULT_SCHEDULE_STATE.days],
+        initialized: false,
+      };
+    }
+    return { ...parsed, initialized: true };
   } catch {
-    return { ...DEFAULT_SCHEDULE_STATE, days: [...DEFAULT_SCHEDULE_STATE.days] };
+    return {
+      ...DEFAULT_SCHEDULE_STATE,
+      days: [...DEFAULT_SCHEDULE_STATE.days],
+      initialized: false,
+    };
   }
 }
 
 export function saveScheduleState(s: ScheduleState): void {
   try {
-    const normalized = normalizeScheduleState(s) ?? s;
+    const next: ScheduleState = { ...s, initialized: true };
+    const normalized = normalizeScheduleState(next) ?? next;
     localStorage.setItem(SCHEDULE_KEY, JSON.stringify(normalized));
   } catch { /* penyimpanan tidak tersedia: abaikan */ }
 }
@@ -41,6 +66,7 @@ export function saveScheduleState(s: ScheduleState): void {
 export function saveAiScheduleState(current: ScheduleState, aiSessions: PlanSession[], aiSummary?: string): ScheduleState {
   const next: ScheduleState = {
     ...clearAiSchedule(current),
+    initialized: true,
     ...(aiSessions.length > 0 ? { aiSessions } : {}),
     ...(aiSummary?.trim() ? { aiSummary: aiSummary.trim() } : {}),
   };
@@ -72,6 +98,39 @@ export function updateCustomSessionState(
 
 export function deleteCustomSessionState(current: ScheduleState, id: string): ScheduleState {
   const next = deleteCustomSession(current, id);
+  saveScheduleState(next);
+  return next;
+}
+
+export function deleteSessionState(
+  current: ScheduleState,
+  targetId: string,
+  opts?: { extraDeletedIds?: string[]; markClearedIfEmpty?: boolean },
+): ScheduleState {
+  const next = deleteSession(current, targetId, opts);
+  saveScheduleState(next);
+  return next;
+}
+
+export function deleteSessionsOnDateState(
+  current: ScheduleState,
+  dateIso: IsoDate,
+  baseIdsOnDate: string[] = [],
+  markClearedIfEmpty = false,
+): ScheduleState {
+  const next = deleteSessionsOnDate(current, dateIso, baseIdsOnDate, markClearedIfEmpty);
+  saveScheduleState(next);
+  return next;
+}
+
+export function clearAllSessionsState(current: ScheduleState): ScheduleState {
+  const next = clearAllSessions(current);
+  saveScheduleState(next);
+  return next;
+}
+
+export function resetScheduleState(current: ScheduleState): ScheduleState {
+  const next = { ...resetSchedule(current), initialized: true };
   saveScheduleState(next);
   return next;
 }

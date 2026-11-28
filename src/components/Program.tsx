@@ -72,8 +72,8 @@ export default function Program({
   } | null>(null);
 
   const updateSchedule = (next: ScheduleState) => {
-    setSt(next);
     saveScheduleState(next);
+    setSt(next);
   };
 
   const profileRaceIso = profile.targetRaceDate > 0 ? isoFromRaceTs(profile.targetRaceDate) : '';

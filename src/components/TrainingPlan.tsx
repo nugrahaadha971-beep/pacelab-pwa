@@ -38,7 +38,8 @@ import {
   clearAiSchedule,
   completedIds,
   dayNum,
-  deleteCustomSession,
+  deleteSession,
+  deleteSessionsOnDate,
   flattenPlan,
   formatDateId,
   formatDayMonth,
@@ -56,6 +57,7 @@ import {
 import type { IsoDate, PlanSession, ScheduleState } from '../plans/schedule';
 import { kindToCategory } from '../plans/workoutTypes';
 import { loadK5, saveK5 } from '../plans/k5Store';
+import { saveScheduleState } from '../plans/scheduleStore';
 import { parseDuration } from '../parsers/manual';
 import { fmtHms, todayStr } from './format';
 import AiLoader from './AiLoader';
@@ -177,7 +179,7 @@ function SettingsSheet({
               +1 hari
             </Button>
             <Button variant="secondary" onClick={() => setAskReset(true)}>
-              Reset
+              Reset ke Default
             </Button>
           </div>
           {askReset && (
@@ -186,7 +188,7 @@ function SettingsSheet({
               aria-label="Konfirmasi reset jadwal"
               className="mt-3 rounded-2xl border border-rose-500/40 bg-rose-500/10 p-3"
             >
-              <p className="text-xs text-zinc-200">Reset jadwal ke pengaturan awal?</p>
+              <p className="text-xs text-zinc-200">Reset jadwal ke pengaturan default?</p>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <Button variant="secondary" onClick={() => setAskReset(false)}>
                   Batal
@@ -194,11 +196,13 @@ function SettingsSheet({
                 <Button
                   variant="danger-solid"
                   onClick={() => {
-                    update(resetSchedule(st));
+                    const next = { ...resetSchedule(st), initialized: true };
+                    saveScheduleState(next);
+                    update(next);
                     setAskReset(false);
                   }}
                 >
-                  Reset
+                  Reset ke Default
                 </Button>
               </div>
             </div>
@@ -278,8 +282,10 @@ export default function TrainingPlan({
   const easyPace = paceSecPerKm('rec', row) ?? easyPaceSecPerKm;
   const workoutDays = new Set(workouts.map((w) => isoFromLocal(w.date)));
 
+  const deletedSet = new Set(st.deletedIds ?? []);
   const standaloneSessions: PlanSession[] = !raceIso
     ? [...(st.aiSessions ?? []), ...(st.customSessions ?? [])]
+        .filter((item) => !deletedSet.has(item.id))
         .map((item) => ({ ...item, date: st.overrides[item.id] ?? item.date }))
         .sort((a, b) => dayNum(a.date) - dayNum(b.date))
     : [];
@@ -405,18 +411,65 @@ export default function TrainingPlan({
   const handleApplyAiPlan = () => {
     if (!aiPreview) return;
     const base = clearAiSchedule(st);
-    update({
+    const nextState: ScheduleState = {
       ...base,
+      initialized: true,
       aiSessions: aiPreview.sessions,
       aiSummary: aiPreview.summary,
-    });
+    };
+    saveScheduleState(nextState);
+    update(nextState);
     setAiPreview(null);
     setAiError(null);
   };
 
   const handleRestoreStandard = () => {
-    update(clearAiSchedule(st));
+    const nextState: ScheduleState = { ...clearAiSchedule(st), initialized: true };
+    saveScheduleState(nextState);
+    update(nextState);
     setAiError(null);
+  };
+
+  const baseSessionsOnDate = (dateIso: IsoDate): string[] => {
+    if (!basePlan || !raceIso) return [];
+    const baseOnly = applyScheduleState(
+      basePlan,
+      {
+        days: st.days,
+        shift: st.shift,
+        overrides: st.overrides,
+        done: {},
+      },
+      raceIso,
+    );
+    return flattenPlan(baseOnly)
+      .filter((b) => b.date === dateIso)
+      .map((b) => b.id);
+  };
+
+  const handleDeleteSession = (target: PlanSession) => {
+    const extraDeletedIds = baseSessionsOnDate(target.date);
+    const remainingCount = flat.filter((item) => item.id !== target.id).length;
+    const nextState = deleteSession(st, target.id, {
+      extraDeletedIds,
+      markClearedIfEmpty: remainingCount === 0,
+    });
+    saveScheduleState(nextState);
+    update(nextState);
+  };
+
+  const handleDeleteDay = (dateIso: IsoDate) => {
+    const baseIdsOnDate = baseSessionsOnDate(dateIso);
+    const remainingCount = flat.filter((item) => item.date !== dateIso).length;
+    const nextState = deleteSessionsOnDate(st, dateIso, baseIdsOnDate, remainingCount === 0);
+    saveScheduleState(nextState);
+    update(nextState);
+  };
+
+  const handleResetToDefault = () => {
+    const nextState: ScheduleState = { ...resetSchedule(st), initialized: true };
+    saveScheduleState(nextState);
+    update(nextState);
   };
 
   return (
@@ -538,6 +591,22 @@ export default function TrainingPlan({
 
       {/* Daftar Sesi Minggu / Tanggal Terpilih */}
       <section className="space-y-3" aria-label="Daftar Sesi Jadwal">
+        {selectedDate && visibleRawSessions.length > 0 && (
+          <div className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-[#121215] px-3.5 py-2 text-xs">
+            <span className="font-semibold text-zinc-300">
+              {formatDateId(selectedDate)} · {visibleRawSessions.length} sesi
+            </span>
+            <button
+              type="button"
+              onClick={() => handleDeleteDay(selectedDate)}
+              className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-rose-500/30 bg-rose-500/10 px-2.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+            >
+              <Trash2 size={12} aria-hidden />
+              <span>Hapus Hari Ini</span>
+            </button>
+          </div>
+        )}
+
         {visibleRawSessions.length === 0 ? (
           <div className="sport-card border-dashed border-white/15 p-5 text-center">
             <p className="text-sm text-zinc-300">
@@ -545,14 +614,26 @@ export default function TrainingPlan({
                 ? `Tidak ada sesi latihan pada ${formatDateId(selectedDate)}.`
                 : 'Belum ada sesi latihan pada minggu ini.'}
             </p>
-            <button
-              type="button"
-              onClick={onAddCustomSession}
-              className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-2xl border border-[#BEF264]/35 bg-[#BEF264]/10 px-4 text-xs font-bold text-[#BEF264] transition hover:bg-[#BEF264]/15"
-            >
-              <Plus size={14} aria-hidden />
-              <span>Tambah Sesi</span>
-            </button>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={onAddCustomSession}
+                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-2xl border border-[#BEF264]/35 bg-[#BEF264]/10 px-4 text-xs font-bold text-[#BEF264] transition hover:bg-[#BEF264]/15"
+              >
+                <Plus size={14} aria-hidden />
+                <span>Tambah Sesi</span>
+              </button>
+              {raceIso && (st.clearedByUser || (st.deletedIds?.length ?? 0) > 0) && (
+                <button
+                  type="button"
+                  onClick={handleResetToDefault}
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-2xl border border-white/10 bg-[#18181D] px-4 text-xs font-semibold text-zinc-300 transition hover:text-white"
+                >
+                  <RotateCcw size={13} aria-hidden />
+                  <span>Reset ke Default</span>
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           visibleRawSessions.map((raw) => {
@@ -705,8 +786,8 @@ export default function TrainingPlan({
                   </div>
                 )}
 
-                {isCustom && (
-                  <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">
+                <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">
+                  {isCustom && (
                     <button
                       type="button"
                       onClick={() => onEditCustomSession(s)}
@@ -716,17 +797,17 @@ export default function TrainingPlan({
                       <Pencil size={13} aria-hidden />
                       <span>Edit</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => update(deleteCustomSession(st, s.id))}
-                      aria-label={`Hapus sesi ${sessionTitle}`}
-                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
-                    >
-                      <Trash2 size={13} aria-hidden />
-                      <span>Hapus</span>
-                    </button>
-                  </div>
-                )}
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteSession(s)}
+                    aria-label={`Hapus sesi ${sessionTitle}`}
+                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                  >
+                    <Trash2 size={13} aria-hidden />
+                    <span>Hapus</span>
+                  </button>
+                </div>
 
                 <details className="group mt-3 rounded-2xl border border-white/[0.08] bg-[#18181D]/60">
                   <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-2 px-3.5 text-xs font-semibold text-zinc-300">

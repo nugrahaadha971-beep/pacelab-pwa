@@ -36,7 +36,7 @@ export function nextSession(profile: UserProfile, workouts: Workout[], now: numb
   const st = loadScheduleState();
 
   const hasCustomOrAi = Boolean((st.customSessions && st.customSessions.length > 0) || (st.aiSessions && st.aiSessions.length > 0));
-  if (st.customOnly && !hasCustomOrAi) {
+  if ((st.customOnly || st.clearedByUser) && !hasCustomOrAi) {
     return null;
   }
   if (!raceIso && !hasCustomOrAi) {
