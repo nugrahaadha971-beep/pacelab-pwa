@@ -86,8 +86,8 @@ export default function App() {
 
   if (profile === null) {
     return (
-      <div className="min-h-dvh bg-[#09090B] text-zinc-100">
-        <main className="mx-auto max-w-xl px-4 pb-12 pt-8 sm:px-6">
+      <div className="flex min-h-dvh flex-col bg-[#09090B] text-zinc-100">
+        <main className="mx-auto w-full max-w-xl flex-1 min-h-0 px-4 pb-12 pt-8 sm:px-6">
           <Profil profile={null} onSaved={reload} />
         </main>
       </div>
@@ -184,7 +184,7 @@ export default function App() {
       </header>
 
       {/* Main Content Canvas */}
-      <div className="flex flex-1 flex-col md:pl-60 lg:pl-64">
+      <div className="flex flex-1 min-h-0 flex-col md:pl-60 lg:pl-64">
         {/* Desktop Top Utility Bar (>= 768px) — Ikon Profil Pojok Kanan Atas */}
         <header className="sticky top-0 z-20 hidden h-14 items-center justify-end border-b border-white/10 bg-[#09090B]/85 px-6 backdrop-blur-md md:flex lg:px-8">
           <button
@@ -203,7 +203,7 @@ export default function App() {
           </button>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 overflow-y-auto overscroll-y-contain px-4 pb-28 pt-5 sm:px-6 md:pb-12 md:pt-6 lg:px-8">
+        <main className="mx-auto w-full max-w-7xl flex-1 min-h-0 px-4 pb-28 pt-5 sm:px-6 md:pb-12 md:pt-6 lg:px-8">
           {tab === 'beranda' && (
             <Beranda
               profile={profile}
@@ -230,7 +230,9 @@ export default function App() {
         </main>
       </div>
 
-      <CatatSheet profile={profile} open={catatOpen} onClose={() => setCatatOpen(false)} onSaved={reload} />
+      {catatOpen && (
+        <CatatSheet profile={profile} open onClose={() => setCatatOpen(false)} onSaved={reload} />
+      )}
 
       {/* Mobile Fixed Bottom Navigation Bar (< 768px): 4 Tab + 1 Tombol Tengah (+) */}
       <div

@@ -6,6 +6,12 @@ html, body, #root {
   background: #09090B;
   color: #f4f4f5;
 }
+html, body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
 html { -webkit-tap-highlight-color: transparent; }
 body {
   margin: 0;
