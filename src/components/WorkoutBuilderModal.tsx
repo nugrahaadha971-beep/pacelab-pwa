@@ -367,37 +367,71 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
                 }}
                 className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#121215] px-2.5 text-zinc-100 focus:border-[#BEF264] focus:outline-none"
               >
-                <option value="time">Waktu (menit)</option>
+                <option value="time">Waktu (mm:ss)</option>
                 <option value="distance">Jarak (meter)</option>
                 <option value="open">Tombol Lap</option>
               </select>
             </label>
 
-            {step.durationType !== 'open' && (
+            {step.durationType === 'time' && (
+              <div className="col-span-2 grid grid-cols-2 gap-2">
+                <label className="space-y-1">
+                  <span className="text-zinc-400">Menit</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={Math.floor((step.durationValue ?? 0) / 60)}
+                    onChange={(e) => {
+                      const raw = Number(e.target.value);
+                      const mins = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+                      const secs = (step.durationValue ?? 0) % 60;
+                      updateStep(step.id, {
+                        durationValue: Math.max(5, mins * 60 + secs),
+                      });
+                    }}
+                    className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#121215] px-2.5 font-mono tabular-nums text-zinc-100 focus:border-[#BEF264] focus:outline-none"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-zinc-400">Detik</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={(step.durationValue ?? 0) % 60}
+                    onChange={(e) => {
+                      const raw = Number(e.target.value);
+                      const secs = Number.isFinite(raw)
+                        ? Math.max(0, Math.min(59, Math.floor(raw)))
+                        : 0;
+                      const mins = Math.floor((step.durationValue ?? 0) / 60);
+                      updateStep(step.id, {
+                        durationValue: Math.max(5, mins * 60 + secs),
+                      });
+                    }}
+                    className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#121215] px-2.5 font-mono tabular-nums text-zinc-100 focus:border-[#BEF264] focus:outline-none"
+                  />
+                </label>
+              </div>
+            )}
+
+            {step.durationType === 'distance' && (
               <label className="space-y-1">
-                <span className="text-zinc-400">
-                  {step.durationType === 'time' ? 'Menit' : 'Meter'}
-                </span>
+                <span className="text-zinc-400">Meter</span>
                 <input
                   type="number"
                   min={1}
-                  value={
-                    step.durationType === 'time'
-                      ? Math.max(1, Math.round((step.durationValue ?? 60) / 60))
-                      : step.durationValue ?? 1000
-                  }
+                  value={step.durationValue ?? 1000}
                   onChange={(e) => {
                     const val = Math.max(1, Number(e.target.value) || 1);
-                    updateStep(step.id, {
-                      durationValue: step.durationType === 'time' ? val * 60 : val,
-                    });
+                    updateStep(step.id, { durationValue: val });
                   }}
                   className="min-h-[44px] w-full rounded-xl border border-white/10 bg-[#121215] px-2.5 font-mono tabular-nums text-zinc-100 focus:border-[#BEF264] focus:outline-none"
                 />
               </label>
             )}
 
-            <label className="space-y-1">
+            <label className={step.durationType === 'distance' ? 'space-y-1' : 'col-span-2 space-y-1'}>
               <span className="text-zinc-400">Target</span>
               <select
                 value={step.targetType}
@@ -547,7 +581,11 @@ export const WorkoutBuilderModal: React.FC<Props> = ({
               {isEdit ? 'Edit Sesi Program' : 'Input Sesi Program'}
             </h3>
             <p className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-400">
-              Estimasi: {summary.durationMin} mnt · ~{summary.distanceKm} km · {summary.hrRange[0]}–{summary.hrRange[1]} bpm
+              Estimasi:{' '}
+              {summary.totalSec < 60 || summary.totalSec % 60 !== 0
+                ? formatDuration('time', summary.totalSec)
+                : `${summary.durationMin} mnt`}{' '}
+              · ~{summary.distanceKm} km · {summary.hrRange[0]}–{summary.hrRange[1]} bpm
             </p>
           </div>
           <button

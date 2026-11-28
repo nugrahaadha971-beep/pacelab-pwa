@@ -156,6 +156,7 @@ export function summarizeWorkout(
   }
 
   return {
+    totalSec: Math.round(totalSec),
     durationMin: Math.max(1, Math.round(totalSec / 60)),
     distanceKm: Number((totalMeters / 1000).toFixed(1)),
     steps: stepsText,

@@ -640,11 +640,20 @@ test('workoutTypes: Karvonen getZoneBpm, summarizeWorkout, WORKOUT_PRESETS, norm
   const norwegian = WORKOUT_PRESETS.norwegian4x4;
   const summary = summarizeWorkout(norwegian.blocks, 195, 58, 390);
   // Warmup 10 + 4*(4+3) + Cooldown Open (5) = 43 menit
+  assert.equal(summary.totalSec, 2580);
   assert.equal(summary.durationMin, 43);
   assert.ok(summary.distanceKm > 5);
   assert.deepEqual(summary.hrRange, [166, 185]);
   assert.equal(summary.steps.length, 3);
   assert.match(summary.steps[1], /^4× \[/);
+
+  const shortInterval = summarizeWorkout([
+    { id: 's45', type: 'step', kind: 'run', durationType: 'time', durationValue: 45, targetType: 'hr_zone', hrZone: 5 },
+  ], 195, 58, 390);
+  assert.equal(shortInterval.totalSec, 45);
+  assert.equal(shortInterval.durationMin, 1);
+  assert.equal(formatDuration('time', 45), '0:45');
+  assert.equal(formatDuration('time', 90), '1:30');
 
   assert.equal(formatDuration('distance', 400), '400 m');
   assert.equal(formatDuration('distance', 8000), '8.0 km');
